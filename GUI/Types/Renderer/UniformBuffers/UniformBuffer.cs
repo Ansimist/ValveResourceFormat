@@ -4,24 +4,19 @@ using OpenTK.Graphics.OpenGL;
 
 namespace GUI.Types.Renderer.UniformBuffers
 {
-    interface IBuffer : IDisposable
-    {
-    }
-
     public enum ReservedBufferSlots
     {
         View = 0,
         Lighting = 1,
         LightProbe = 2,
+        EnvmapBinding = 3,
+        InstanceBuffer = 4,
+        TransformBuffer = 5,
     }
 
-    class UniformBuffer<T> : IBuffer
+    class UniformBuffer<T> : Buffer
         where T : new()
     {
-        public int Handle { get; }
-        public int Size { get; }
-        public int BindingPoint { get; }
-
         T data;
         public T Data { get => data; set { data = value; Update(); } }
 
@@ -29,12 +24,8 @@ namespace GUI.Types.Renderer.UniformBuffers
         readonly float[] cpuBuffer;
         readonly GCHandle cpuBufferHandle;
 
-        public UniformBuffer(int bindingPoint)
+        public UniformBuffer(int bindingPoint) : base(BufferTarget.UniformBuffer, bindingPoint, typeof(T).Name)
         {
-            GL.CreateBuffers(1, out int handle);
-            Handle = handle;
-            BindingPoint = bindingPoint;
-
             Size = Marshal.SizeOf<T>();
             Debug.Assert(Size % 16 == 0);
 
@@ -43,11 +34,6 @@ namespace GUI.Types.Renderer.UniformBuffers
 
             data = new T();
             Initialize();
-
-#if DEBUG
-            var objectLabel = nameof(UniformBuffer<T>);
-            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, Handle, objectLabel.Length, objectLabel);
-#endif
         }
 
         public UniformBuffer(ReservedBufferSlots slot) : this((int)slot) { }
@@ -71,11 +57,10 @@ namespace GUI.Types.Renderer.UniformBuffers
             GL.NamedBufferSubData(Handle, IntPtr.Zero, Size, cpuBuffer);
         }
 
-        public void Dispose()
+        public override void Dispose()
         {
-            // make sure dispose gets called, or this will leak
             cpuBufferHandle.Free();
-            GL.DeleteBuffer(Handle);
+            base.Dispose();
         }
     }
 }

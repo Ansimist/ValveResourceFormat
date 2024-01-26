@@ -14,12 +14,12 @@ out vec3 vBitangentOut;
 out vec2 vTexCoordOut;
 out vec4 vColorOut;
 
+#include "common/instancing.glsl"
 #include "common/ViewConstants.glsl"
-uniform mat4 transform;
 
 void main()
 {
-    mat4 skinTransform = transform * getSkinMatrix();
+    mat4 skinTransform = CalculateObjectToWorldMatrix() * getSkinMatrix();
     vec4 fragPosition = skinTransform * vec4(vPOSITION, 1.0);
     gl_Position = g_matViewToProjection * fragPosition;
     vFragPosition = fragPosition.xyz / fragPosition.w;

@@ -7,7 +7,7 @@
 #define renderMode_ShaderId 0
 #define renderMode_ShaderProgramId 0
 
-uniform uint sceneObjectId;
+layout (location = 0) flat in uint nTransformBufferOffset;
 uniform uint meshId;
 uniform uint shaderId;
 uniform uint shaderProgramId;
@@ -29,7 +29,7 @@ uniform uint isSkybox;
     void main()
     {
         #if renderMode_ObjectId == 1
-            outputColor = ColorFromId(sceneObjectId, 0u);
+            outputColor = ColorFromId(nTransformBufferOffset, 0u);
         #elif renderMode_MeshId == 1
             outputColor = ColorFromId(meshId, 19u);
         #elif renderMode_ShaderId == 1
@@ -43,6 +43,6 @@ uniform uint isSkybox;
     out uvec4 outputColor;
     void main()
     {
-        outputColor = uvec4(sceneObjectId, meshId, isSkybox, 0);
+        outputColor = uvec4(nTransformBufferOffset, meshId, isSkybox, 0);
     }
 #endif

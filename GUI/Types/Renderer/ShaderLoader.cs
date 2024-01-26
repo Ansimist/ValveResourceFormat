@@ -89,8 +89,13 @@ namespace GUI.Types.Renderer
 
                 // Fragment shader
                 var fragmentName = $"{shaderFileName}.frag";
-                var fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
-                LoadShader(fragmentShader, fragmentName, shaderName, arguments, ref parsedData);
+                var fragmentShader = 0;
+
+                if (shaderName != "vrf.depth_only")
+                {
+                    fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
+                    LoadShader(fragmentShader, fragmentName, shaderName, arguments, ref parsedData);
+                }
 
                 var renderModes = parsedData.Defines
                     .Where(k => k.StartsWith(RenderModeDefinePrefix, StringComparison.Ordinal))
@@ -102,7 +107,11 @@ namespace GUI.Types.Renderer
 #if DEBUG
                 GL.ObjectLabel(ObjectLabelIdentifier.Program, shaderProgram, shaderFileName.Length, shaderFileName);
                 GL.ObjectLabel(ObjectLabelIdentifier.Shader, vertexShader, vertexName.Length, vertexName);
-                GL.ObjectLabel(ObjectLabelIdentifier.Shader, fragmentShader, fragmentName.Length, fragmentName);
+
+                if (fragmentShader > 0)
+                {
+                    GL.ObjectLabel(ObjectLabelIdentifier.Shader, fragmentShader, fragmentName.Length, fragmentName);
+                }
 #endif
 
                 var shader = new Shader
@@ -119,7 +128,11 @@ namespace GUI.Types.Renderer
                 };
 
                 GL.AttachShader(shader.Program, vertexShader);
-                GL.AttachShader(shader.Program, fragmentShader);
+
+                if (fragmentShader > 0)
+                {
+                    GL.AttachShader(shader.Program, fragmentShader);
+                }
 
                 GL.LinkProgram(shader.Program);
                 GL.GetProgram(shader.Program, GetProgramParameterName.LinkStatus, out var linkStatus);
@@ -127,8 +140,11 @@ namespace GUI.Types.Renderer
                 GL.DetachShader(shader.Program, vertexShader);
                 GL.DeleteShader(vertexShader);
 
-                GL.DetachShader(shader.Program, fragmentShader);
-                GL.DeleteShader(fragmentShader);
+                if (fragmentShader > 0)
+                {
+                    GL.DetachShader(shader.Program, fragmentShader);
+                    GL.DeleteShader(fragmentShader);
+                }
 
                 if (linkStatus != 1)
                 {
@@ -208,6 +224,7 @@ namespace GUI.Types.Renderer
         {
             "vrf.background" => "background",
             "vrf.default" => "default",
+            "vrf.depth_only" => "depth_only",
             "vrf.grid" => "grid",
             "vrf.picking" => "picking",
             "vrf.particle.sprite" => "particle_sprite",

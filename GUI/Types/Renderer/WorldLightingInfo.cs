@@ -27,6 +27,7 @@ partial class Scene
         public Dictionary<string, RenderTexture> Lightmaps { get; } = [];
         public List<SceneLightProbe> LightProbes { get; set; } = [];
         public List<SceneEnvMap> EnvMaps { get; set; } = [];
+        public byte[] EnvMapBindings { get; set; } = [];
         public Dictionary<int, SceneEnvMap> EnvMapHandshakes { get; } = [];
         public Dictionary<int, SceneLightProbe> ProbeHandshakes { get; } = [];
         public bool HasValidLightmaps { get; set; }

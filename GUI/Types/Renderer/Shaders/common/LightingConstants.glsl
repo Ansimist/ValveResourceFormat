@@ -10,7 +10,7 @@ layout(std140, binding = 1) uniform LightingConstants {
     mat4 g_matEnvMapWorldToLocal[MAX_ENVMAPS];
     vec4[MAX_ENVMAPS] g_vEnvMapBoxMins;
     vec4[MAX_ENVMAPS] g_vEnvMapBoxMaxs;
-    vec4[MAX_ENVMAPS] g_vEnvMapEdgeFadeDists;
+    vec4[MAX_ENVMAPS] g_vEnvMapEdgeFadeDistsInv;
     vec4[MAX_ENVMAPS] g_vEnvMapProxySphere;
     vec4[MAX_ENVMAPS] g_vEnvMapColorRotated;
     vec4[MAX_ENVMAPS] g_vEnvMapNormalizationSH;

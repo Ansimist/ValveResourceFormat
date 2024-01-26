@@ -5,6 +5,7 @@
 //? #include "LightingConstants.glsl"
 //? #include "lighting_common.glsl"
 //? #include "pbr.glsl"
+//? #include "instancing.glsl"
 //? #include "lighting.glsl"
 
 #define SCENE_CUBEMAP_TYPE 0 // 0 = None, 1 = Per-batch cube map, 2 = Per-scene cube map array
@@ -13,19 +14,79 @@
     // ...
 #elif (SCENE_CUBEMAP_TYPE == 1)
     uniform samplerCube g_tEnvironmentMap;
-    uniform int g_iEnvMapArrayIndices;
 #elif (SCENE_CUBEMAP_TYPE == 2)
     uniform samplerCubeArray g_tEnvironmentMap;
-    uniform int g_iEnvMapArrayIndices[MAX_ENVMAPS];
 #endif
 
-vec3 CubemapParallaxCorrection(vec3 envMapLocalPos, vec3 localReflectionVector, vec3 envMapBoxMin, vec3 envMapBoxMax)
+layout(std430, binding = 2) buffer g_envmapInstanceBuffer
+{
+    uint g_nEnvMapIndices[];
+};
+
+const int ENVMAP_DATA_STRIDE = 16;
+const int ENVMAP_MAX_COUNT = ENVMAP_DATA_STRIDE - 1;
+
+int _GetInstanceEnvmapDataIndex(int nEnvmap)
+{
+    int indexStride = nEnvmap / 4;
+    int indexBitwiseOffset = nEnvmap % 4;
+
+    uint fourIndices = g_nEnvMapIndices[(nTransformBufferOffset * (ENVMAP_DATA_STRIDE / 4)) + indexStride];
+
+    return int((fourIndices >> (indexBitwiseOffset * 8)) & 0xff);
+}
+
+int GetInstanceEnvmapCount()
+{
+    return _GetInstanceEnvmapDataIndex(0);
+}
+
+int GetInstanceEnvmapDataIndex(int nEnvmap)
+{
+    return _GetInstanceEnvmapDataIndex(nEnvmap); // Index 0 is the count
+}
+
+struct AABB
+{
+    vec3 Min; vec3 Max;
+};
+
+struct EnvMap
+{
+    AABB Bounds;
+    mat4x3 WorldToLocal;
+    vec3 ProxySphere;
+    bool IsBoxProjection;
+    vec3 EdgeFadeDistsInverse;
+    int ArrayTextureIndex;
+
+    // Position as seen by the current fragment.
+    vec3 LocalPosition;
+};
+
+EnvMap GetEnvMap(int dataIndex, vec3 vFragPosition)
+{
+    EnvMap envMapData;
+    envMapData.WorldToLocal = mat4x3(g_matEnvMapWorldToLocal[dataIndex]);
+    envMapData.ArrayTextureIndex = int(g_vEnvMapBoxMins[dataIndex].w);
+    envMapData.Bounds.Min = g_vEnvMapBoxMins[dataIndex].xyz;
+    envMapData.Bounds.Max = g_vEnvMapBoxMaxs[dataIndex].xyz;
+    envMapData.ProxySphere = g_vEnvMapProxySphere[dataIndex].xyz;
+    envMapData.IsBoxProjection = g_vEnvMapProxySphere[dataIndex].w == 1.0;
+    envMapData.EdgeFadeDistsInverse = g_vEnvMapEdgeFadeDistsInv[dataIndex].xyz;
+
+    envMapData.LocalPosition = envMapData.WorldToLocal * vec4(vFragPosition, 1.0);
+
+    return envMapData;
+}
+
+vec3 CubemapParallaxCorrection(in EnvMap envMapData, vec3 localReflectionVector)
 {
     // https://seblagarde.wordpress.com/2012/09/29/image-based-lighting-approaches-and-parallax-corrected-cubemap/
     // Following is the parallax-correction code
     // Find the ray intersection with box plane
-    vec3 FirstPlaneIntersect = (envMapBoxMin - envMapLocalPos) / localReflectionVector;
-    vec3 SecondPlaneIntersect = (envMapBoxMax - envMapLocalPos) / localReflectionVector;
+    vec3 FirstPlaneIntersect = (envMapData.Bounds.Min - envMapData.LocalPosition) / localReflectionVector;
+    vec3 SecondPlaneIntersect = (envMapData.Bounds.Max - envMapData.LocalPosition) / localReflectionVector;
     // Get the furthest of these intersections along the ray
     // (Ok because x/0 give +inf and -x/0 give -inf )
     vec3 FurthestPlane = max(FirstPlaneIntersect, SecondPlaneIntersect);
@@ -33,17 +94,17 @@ vec3 CubemapParallaxCorrection(vec3 envMapLocalPos, vec3 localReflectionVector, 
     float Distance = abs(min3(FurthestPlane));
 
     // Get the intersection position
-    return normalize(envMapLocalPos + localReflectionVector * Distance);
+    return normalize(envMapData.LocalPosition + localReflectionVector * Distance);
 }
 
 
 float GetEnvMapLOD(float roughness, vec3 R, float clothMask)
 {
-    #if (renderMode_Cubemaps == 1)
-        return sin(g_flTime * 3);
-    #endif
-
     const float EnvMapMipCount = g_vEnvMapSizeConstants.x;
+
+    #if (renderMode_Cubemaps == 1)
+        return ((sin(g_flTime) + 1) / 2) * EnvMapMipCount;
+    #endif
 
     #if F_CLOTH_SHADING == 1
         float lod = mix(roughness, pow(roughness, 0.125), clothMask);
@@ -113,14 +174,16 @@ vec3 EnvBRDF(vec3 specColor, float rough, vec3 N, vec3 V)
     }
 #endif
 
-vec3 GetCorrectedSampleCoords(vec3 R, mat4x3 envMapWorldToLocal, vec3 envMapLocalPos, bool isBoxProjection, vec3 envMapBoxMin, vec3 envMapBoxMax)
+vec3 GetCorrectedSampleCoords(vec3 R, in EnvMap envMapData)
 {
-    vec3 localReflectionVector = envMapWorldToLocal * vec4(R, 0.0);
-    return isBoxProjection
-        ? CubemapParallaxCorrection(envMapLocalPos, localReflectionVector, envMapBoxMin, envMapBoxMax)
-        : R;
-}
+    if (!envMapData.IsBoxProjection)
+    {
+        return R;
+    }
 
+    vec3 localReflectionVector = envMapData.WorldToLocal * vec4(R, 0.0);
+    return CubemapParallaxCorrection(envMapData, localReflectionVector);
+}
 
 vec3 GetEnvironment(MaterialProperties_t mat)
 {
@@ -158,63 +221,67 @@ vec3 GetEnvironment(MaterialProperties_t mat)
 
     #if (SCENE_CUBEMAP_TYPE == 0)
         envMap = max(g_vClearColor.rgb, vec3(0.3, 0.1, 0.1));
-    #elif (SCENE_CUBEMAP_TYPE == 1)
-        int envMapArrayIndex = g_iEnvMapArrayIndices;
-        vec4 proxySphere = g_vEnvMapProxySphere[envMapArrayIndex];
-        bool isBoxProjection = proxySphere.w == 1.0f;
-        vec3 envMapBoxMin = g_vEnvMapBoxMins[envMapArrayIndex].xyz;
-        vec3 envMapBoxMax = g_vEnvMapBoxMaxs[envMapArrayIndex].xyz;
-        mat4x3 envMapWorldToLocal = mat4x3(g_matEnvMapWorldToLocal[envMapArrayIndex]);
-        vec3 envMapLocalPos = envMapWorldToLocal * vec4(vFragPosition, 1.0);
+    #elif (SCENE_CUBEMAP_TYPE == 1 || SCENE_CUBEMAP_TYPE == 2)
 
-        vec3 coords = GetCorrectedSampleCoords(R, envMapWorldToLocal, envMapLocalPos, isBoxProjection, envMapBoxMin, envMapBoxMax);
-        coords = mix(coords, mat.AmbientNormal, (bIsClothShading) ? sqrt(roughness) : roughness); // blend to fully corrected
+        #if (SCENE_CUBEMAP_TYPE == 1)
+            const bool bCubemapFadeEnabled = false;
+        #else
+            const bool bCubemapFadeEnabled = true;
+        #endif
 
-        envMap = textureLod(g_tEnvironmentMap, coords, lod).rgb;
-    #elif (SCENE_CUBEMAP_TYPE == 2)
+        float totalWeight = 0.01;
 
-    float totalWeight = 0.01;
+        int nInstanceEnvMaps = GetInstanceEnvmapCount();
+        int nInstanceEnvMapsClamped = min(nInstanceEnvMaps, ENVMAP_MAX_COUNT);
 
-    for (int i = 0; i < g_vEnvMapSizeConstants.y; i++) {
-        int envMapArrayIndex = g_iEnvMapArrayIndices[i];
-        vec4 proxySphere = g_vEnvMapProxySphere[envMapArrayIndex];
-        bool isBoxProjection = proxySphere.w == 1.0f;
-        vec3 envMapBoxMin = g_vEnvMapBoxMins[envMapArrayIndex].xyz - vec3(0.001);
-        vec3 envMapBoxMax = g_vEnvMapBoxMaxs[envMapArrayIndex].xyz + vec3(0.001);
-        mat4x3 envMapWorldToLocal = mat4x3(g_matEnvMapWorldToLocal[envMapArrayIndex]);
-        vec3 envMapLocalPos = envMapWorldToLocal * vec4(vFragPosition, 1.0);
-        float weight = 1.0f;
+        for (int i = 1; i <= nInstanceEnvMapsClamped; i++)
+        {
+            int dataIndex = GetInstanceEnvmapDataIndex(i);
 
-        vec3 dists = g_vEnvMapEdgeFadeDists[envMapArrayIndex].xyz;
+            float weight = 1.0;
+            EnvMap envMapData = GetEnvMap(dataIndex, vFragPosition);
 
-        if (isBoxProjection) {
-            vec3 envInvEdgeWidth = 1.0 / dists;
-            vec3 envmapClampedFadeMax = clamp((envMapBoxMax - envMapLocalPos) * envInvEdgeWidth, vec3(0.0), vec3(1.0));
-            vec3 envmapClampedFadeMin = clamp((envMapLocalPos - envMapBoxMin) * envInvEdgeWidth, vec3(0.0), vec3(1.0));
-            float distanceFromEdge = min(min3(envmapClampedFadeMin), min3(envmapClampedFadeMax));
+            // extend bounds a little bit
+            envMapData.Bounds.Min -= vec3(0.001);
+            envMapData.Bounds.Max += vec3(0.001);
 
-            if (distanceFromEdge == 0.0)
-            {
-                continue;
+            if (envMapData.IsBoxProjection && bCubemapFadeEnabled) {
+                vec3 envmapClampedFadeMax = saturate((envMapData.Bounds.Max - envMapData.LocalPosition) * envMapData.EdgeFadeDistsInverse);
+                vec3 envmapClampedFadeMin = saturate((envMapData.LocalPosition - envMapData.Bounds.Min) * envMapData.EdgeFadeDistsInverse);
+
+                float distanceFromEdge = min(min3(envmapClampedFadeMin), min3(envmapClampedFadeMax));
+
+                if (distanceFromEdge == 0.0)
+                {
+                    continue;
+                }
+
+                // blend using a smooth curve
+                weight = (pow2(distanceFromEdge) * (3.0 - (2.0 * distanceFromEdge))) * (1.0 - totalWeight);
             }
 
-            // blend using a smooth curve
-            weight = (pow2(distanceFromEdge) * (3.0 - (2.0 * distanceFromEdge))) * (1.0 - totalWeight);
+            totalWeight += weight;
+
+            vec3 coords = GetCorrectedSampleCoords(R, envMapData);
+            coords = mix(coords, mat.AmbientNormal, (bIsClothShading) ? sqrt(roughness) : roughness); // blend to fully corrected
+
+            #if (SCENE_CUBEMAP_TYPE == 1)
+            {
+                envMap = textureLod(g_tEnvironmentMap, coords, lod).rgb; // TODO: upload these cubemaps as cubemap array.
+                break;
+            }
+            #else // SCENE_CUBEMAP_TYPE == 2
+            {
+                int cubeDepth = envMapData.ArrayTextureIndex;
+                envMap += textureLod(g_tEnvironmentMap, vec4(coords, cubeDepth), lod).rgb * weight;
+
+                if (totalWeight > 0.99)
+                {
+                    break;
+                }
+            }
+            #endif
         }
-
-        totalWeight += weight;
-
-        vec3 coords = GetCorrectedSampleCoords(R, envMapWorldToLocal, envMapLocalPos, isBoxProjection, envMapBoxMin, envMapBoxMax);
-        coords = mix(coords, mat.AmbientNormal, (bIsClothShading) ? sqrt(roughness) : roughness); // blend to fully corrected
-
-        envMap += textureLod(g_tEnvironmentMap, vec4(coords, envMapArrayIndex), lod).rgb * weight;
-
-        if (totalWeight > 0.99)
-        {
-            break;
-        }
-    }
-
     #endif // SCENE_CUBEMAP_TYPE == 2
 
     #if (renderMode_Cubemaps == 1)

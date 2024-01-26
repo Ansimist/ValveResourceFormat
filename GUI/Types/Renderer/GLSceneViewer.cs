@@ -29,9 +29,12 @@ namespace GUI.Types.Renderer
         private bool showDynamicOctree;
         private Frustum lockedCullFrustum;
 
+        private StorageBuffer instanceBuffer;
+        private StorageBuffer transformBuffer;
+        private StorageBuffer envMapBindingBuffer;
         protected UniformBuffer<ViewConstants> viewBuffer;
         private UniformBuffer<LightingConstants> lightingBuffer;
-        public List<IBuffer> Buffers { get; private set; }
+
         public List<(ReservedTextureSlots Slot, string Name, RenderTexture Texture)> Textures { get; } = [];
 
         private bool skipRenderModeChange;
@@ -41,6 +44,7 @@ namespace GUI.Types.Renderer
         private OctreeDebugRenderer<SceneNode> staticOctreeRenderer;
         private OctreeDebugRenderer<SceneNode> dynamicOctreeRenderer;
         protected SelectedNodeRenderer selectedNodeRenderer;
+        private Shader depthOnlyShader;
 
         protected GLSceneViewer(VrfGuiContext guiContext, Frustum cullFrustum) : base(guiContext)
         {
@@ -99,6 +103,9 @@ namespace GUI.Types.Renderer
         {
             if (disposing)
             {
+                instanceBuffer?.Dispose();
+                transformBuffer?.Dispose();
+                envMapBindingBuffer?.Dispose();
                 viewBuffer?.Dispose();
                 lightingBuffer?.Dispose();
 
@@ -118,8 +125,62 @@ namespace GUI.Types.Renderer
         {
             viewBuffer = new(ReservedBufferSlots.View);
             lightingBuffer = new(ReservedBufferSlots.Lighting);
+            envMapBindingBuffer = new(ReservedBufferSlots.EnvmapBinding);
+            instanceBuffer = new(ReservedBufferSlots.InstanceBuffer);
+            transformBuffer = new(ReservedBufferSlots.TransformBuffer);
+        }
 
-            Buffers = [viewBuffer, lightingBuffer];
+        [System.Runtime.CompilerServices.InlineArray(SizeInBytes / 4)]
+        public struct PerInstancePackedData
+        {
+            public const int SizeInBytes = 32;
+            private uint data;
+
+            public Color32 TintAlpha { readonly get => new(this[0]); set => this[0] = value.PackedValue; }
+            public int TransformBufferIndex { readonly get => (int)this[1]; set => this[1] = (uint)value; }
+            //public int EnvMapCount { readonly get => (int)this[2]; set => this[2] = (uint)value; }
+            //public bool CustomLightingOrigin { readonly get => (this[3] & 1) != 0; set => PackBit(ref this[3], value); }
+
+            private static void PackBit(ref uint @uint, bool value)
+            {
+                @uint = (@uint & ~1u) | (value ? 1u : 0u);
+            }
+        }
+
+        void UpdateInstanceBuffers()
+        {
+            var transformData = new List<Matrix4x4>() { Matrix4x4.Identity };
+
+            var instanceBufferData = new PerInstancePackedData[Scene.MaxNodeId + 1];
+
+            foreach (var node in Scene.AllNodes)
+            {
+                if (node.Id > Scene.MaxNodeId || node.Id < 0)
+                {
+                    continue;
+                }
+
+                ref var instanceData = ref instanceBufferData[node.Id];
+
+                if (node.Transform.IsIdentity)
+                {
+                    instanceData.TransformBufferIndex = 0;
+                }
+                else
+                {
+                    instanceData.TransformBufferIndex = transformData.Count;
+                    transformData.Add(node.Transform);
+                }
+
+                //instanceData.TintAlpha = node.TintAlpha;
+                //instanceData.EnvMapCount = node.EnvMapCount;
+                // TODO: numbones
+            }
+
+            instanceBuffer.Create(instanceBufferData, PerInstancePackedData.SizeInBytes);
+            transformBuffer.Create(transformData.ToArray(), 64);
+
+            envMapBindingBuffer.Create(Scene.LightingInfo.EnvMapBindings, 1);
         }
 
         void UpdateSceneBuffersGpu(Scene scene, Camera camera)
@@ -176,6 +237,8 @@ namespace GUI.Types.Renderer
                 SkyboxScene.CalculateEnvironmentMaps();
             }
 
+            UpdateInstanceBuffers();
+
             if (Scene.AllNodes.Any() && this is not GLWorldViewer)
             {
                 var first = true;
@@ -218,6 +281,7 @@ namespace GUI.Types.Renderer
             selectedNodeRenderer = new(Scene);
 
             Picker = new PickingTexture(Scene.GuiContext, OnPicked);
+            depthOnlyShader = GuiContext.ShaderLoader.LoadShader("vrf.depth_only");
 
             CreateBuffers();
 
@@ -245,6 +309,8 @@ namespace GUI.Types.Renderer
                 View = this,
                 Camera = Camera,
                 Framebuffer = MainFramebuffer,
+                Flags = Scene.RenderPassFlags.All,
+                ReplacementShader = Camera.Picker.DebugShader ?? null
             };
 
             using (new GLDebugGroup("Update Loop"))
@@ -320,8 +386,37 @@ namespace GUI.Types.Renderer
             GL.Viewport(0, 0, renderContext.Framebuffer.Width, renderContext.Framebuffer.Height);
             renderContext.Framebuffer.Clear();
 
-            // TODO: check if renderpass allows wireframe mode
-            if (IsWireframe)
+            GL.DepthRange(0.05, 1);
+            UpdateSceneBuffersGpu(Scene, Camera);
+
+            if (Scene.DepthPassEnabled && (renderContext.Flags & Scene.RenderPassFlags.DepthPassAllowed) != 0)
+            {
+#if DEBUG
+                const string DepthPass = "Depth Pass";
+                GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 1, DepthPass.Length, DepthPass);
+#endif
+
+                GL.ColorMask(false, false, false, false);
+                GL.DepthMask(true);
+                GL.DepthFunc(DepthFunction.Greater);
+
+                var oldReplacementShader = renderContext.ReplacementShader;
+                renderContext.ReplacementShader = depthOnlyShader;
+
+                renderContext.Scene = Scene;
+                Scene.DepthPassOpaque(renderContext);
+
+                renderContext.ReplacementShader = oldReplacementShader;
+
+                GL.ColorMask(true, true, true, true);
+                GL.DepthFunc(DepthFunction.Gequal);
+
+#if DEBUG
+                GL.PopDebugGroup();
+#endif
+            }
+
+            if (IsWireframe && (renderContext.Flags & Scene.RenderPassFlags.WireframeAllowed) != 0)
             {
                 GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
             }
@@ -375,7 +470,7 @@ namespace GUI.Types.Renderer
                 Scene.RenderTranslucentLayer(renderContext);
             }
 
-            if (IsWireframe)
+            if (IsWireframe && (renderContext.Flags & Scene.RenderPassFlags.WireframeAllowed) != 0)
             {
                 GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
             }
@@ -396,6 +491,7 @@ namespace GUI.Types.Renderer
         protected void AddWireframeToggleControl()
         {
             AddCheckBox("Show Wireframe", false, (v) => IsWireframe = v);
+            AddCheckBox("Enable Depth Pass", Scene.DepthPassEnabled, (v) => Scene.DepthPassEnabled = v);
         }
 
         protected void AddRenderModeSelectionControl()

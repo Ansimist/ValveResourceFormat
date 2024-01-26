@@ -81,6 +81,7 @@ namespace GUI.Types.Renderer
             {
                 OctreeDebugRenderer<SceneNode>.AddBox(vertices, node.Transform, node.LocalBoundingBox, new(1.0f, 1.0f, 0.0f, 1.0f));
 
+                /*
                 if (debugCubeMaps)
                 {
                     var tiedEnvmaps = Scene.LightingInfo.CubemapType switch
@@ -108,6 +109,7 @@ namespace GUI.Types.Renderer
                         i++;
                     }
                 }
+                */
 
                 if (debugLightProbes && node.LightProbeBinding is not null)
                 {

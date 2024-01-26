@@ -13,12 +13,12 @@ out vec4 vTangentOut;
 out vec3 vBitangentOut;
 out vec4 vColorBlendValues;
 
+#include "common/instancing.glsl"
 #include "common/ViewConstants.glsl"
-uniform mat4 transform;
 
 void main()
 {
-    vec4 fragPosition = transform * vec4(vPOSITION, 1.0);
+    vec4 fragPosition = CalculateObjectToWorldMatrix() * vec4(vPOSITION, 1.0);
     gl_Position = g_matViewToProjection * fragPosition;
     vFragPosition = fragPosition.xyz / fragPosition.w;
 

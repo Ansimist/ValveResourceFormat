@@ -25,13 +25,13 @@ out vec4 vTintColorFadeOut;
 uniform vec4 g_vTexCoordOffset = vec4(0.0);
 uniform vec4 g_vTexCoordScale = vec4(1.0);
 
+#include "common/instancing.glsl"
 #include "common/ViewConstants.glsl"
-uniform mat4 transform;
 uniform vec4 vTint;
 
 void main()
 {
-    mat4 skinTransform = transform * getSkinMatrix();
+    mat4 skinTransform = CalculateObjectToWorldMatrix() * getSkinMatrix();
     vec4 fragPosition = skinTransform * vec4(vPOSITION, 1.0);
     gl_Position = g_matViewToProjection * fragPosition;
     vFragPosition = fragPosition.xyz / fragPosition.w;

@@ -159,9 +159,8 @@ uniform float g_flModelTintAmount = 1.0;
 #include "common/texturing.glsl"
 #include "common/pbr.glsl"
 
-#if (S_SPECULAR == 1 || renderMode_Cubemaps == 1)
+flat in uint nTransformBufferOffset;
 #include "common/environment.glsl"
-#endif
 
 #include "common/fog.glsl"
 

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using GUI.Utils;
 using OpenTK.Graphics.OpenGL;
 
@@ -36,25 +37,37 @@ namespace GUI.Types.Renderer
             return a.RenderOrder - b.RenderOrder;
         }
 
-        public static int CompareCameraDistance(Request a, Request b)
+        public static int CompareCameraDistance_BackToFront(Request a, Request b)
         {
             return -a.DistanceFromCamera.CompareTo(b.DistanceFromCamera);
         }
 
-        public static void Render(List<Request> requests, Scene.RenderContext context)
+        public static int CompareCameraDistance_FrontToBack(Request a, Request b)
         {
-            if (context.RenderPass == RenderPass.Opaque)
+            return a.DistanceFromCamera.CompareTo(b.DistanceFromCamera);
+        }
+
+        public static int CompareVaoThenDistance(Request a, Request b)
+        {
+            var vaoCompare = a.Call.VertexArrayObject.CompareTo(b.Call.VertexArrayObject);
+            if (vaoCompare == 0)
             {
-                requests.Sort(ComparePipeline);
+                return CompareCameraDistance_FrontToBack(a, b);
             }
-            else if (context.RenderPass == RenderPass.StaticOverlay)
-            {
-                requests.Sort(CompareRenderOrderThenPipeline);
-            }
-            else if (context.RenderPass == RenderPass.Translucent)
-            {
-                requests.Sort(CompareCameraDistance);
-            }
+
+            return vaoCompare;
+        }
+
+        public static int CompareAABBSize(Request a, Request b)
+        {
+            var aSize = MathF.Max(a.Node.BoundingBox.Size.X, MathF.Max(a.Node.BoundingBox.Size.Y, a.Node.BoundingBox.Size.Z));
+            var bSize = MathF.Max(b.Node.BoundingBox.Size.X, MathF.Max(b.Node.BoundingBox.Size.Y, b.Node.BoundingBox.Size.Z));
+            return aSize.CompareTo(bSize);
+        }
+
+        public static void Render(List<Request> requestsList, Scene.RenderContext context)
+        {
+            var requests = CollectionsMarshal.AsSpan(requestsList);
 
             DrawBatch(requests, context);
         }
@@ -75,7 +88,6 @@ namespace GUI.Types.Renderer
             public int MeshId = -1;
             public int ShaderId = -1;
             public int ShaderProgramId = -1;
-            public int CubeMapArrayIndices = -1;
             public int MorphCompositeTexture = -1;
             public int MorphCompositeTextureSize = -1;
             public int MorphVertexIdOffset = -1;
@@ -106,7 +118,7 @@ namespace GUI.Types.Renderer
             }
         }
 
-        private static void DrawBatch(List<Request> requests, Scene.RenderContext context)
+        public static void DrawBatch(ReadOnlySpan<Request> requests, Scene.RenderContext context)
         {
             var vao = -1;
             Shader shader = null;
@@ -147,7 +159,6 @@ namespace GUI.Types.Renderer
                         if (shader.Parameters.ContainsKey("SCENE_CUBEMAP_TYPE"))
                         {
                             uniforms.EnvmapTexture = shader.GetUniformLocation("g_tEnvironmentMap");
-                            uniforms.CubeMapArrayIndices = shader.GetUniformLocation("g_iEnvMapArrayIndices");
                         }
 
                         if (shader.Parameters.ContainsKey("F_MORPH_SUPPORTED"))
@@ -214,20 +225,10 @@ namespace GUI.Types.Renderer
                 GL.ProgramUniform1((uint)shader.Program, uniforms.ShaderProgramId, (uint)request.Call.Material.Shader.Program);
             }
 
-            if (uniforms.CubeMapArrayIndices != -1 && request.Node.EnvMapIds != null)
+            if (config.NeedsCubemapBinding && request.Node.EnvMap != null)
             {
-                if (config.NeedsCubemapBinding && request.Node.EnvMaps.Count > 0)
-                {
-                    var envmap = request.Node.EnvMaps[0].EnvMapTexture;
-                    var envmapDataIndex = request.Node.EnvMapIds[0];
-
-                    SetInstanceTexture(shader, ReservedTextureSlots.EnvironmentMap, uniforms.EnvmapTexture, envmap);
-                    GL.ProgramUniform1(shader.Program, uniforms.CubeMapArrayIndices, envmapDataIndex);
-                }
-                else
-                {
-                    GL.ProgramUniform1(shader.Program, uniforms.CubeMapArrayIndices, request.Node.EnvMapIds.Length, request.Node.EnvMapIds);
-                }
+                var envmap = request.Node.EnvMap.EnvMapTexture;
+                SetInstanceTexture(shader, ReservedTextureSlots.EnvironmentMap, uniforms.EnvmapTexture, envmap);
             }
 
             if (uniforms.LightProbeVolumeData != -1 && request.Node.LightProbeBinding != null)
@@ -277,6 +278,8 @@ namespace GUI.Types.Renderer
 
                 GL.ProgramUniform4(shader.Program, uniforms.Tint, tint.X, tint.Y, tint.Z, tint.W);
             }
+
+            GL.VertexAttrib1(/*uniforms.ObjectId*/ 5, BitConverter.UInt32BitsToSingle(request.Node.Id));
 
             GL.DrawElementsBaseVertex(
                 request.Call.PrimitiveType,
