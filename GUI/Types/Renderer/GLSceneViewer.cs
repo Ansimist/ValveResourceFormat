@@ -151,11 +151,11 @@ namespace GUI.Types.Renderer
         {
             var transformData = new List<Matrix4x4>() { Matrix4x4.Identity };
 
-            var instanceBufferData = new PerInstancePackedData[Scene.MaxNodeId + 1];
+            var instanceBufferData = new PerInstancePackedData[Scene.NodeCount + 1];
 
             foreach (var node in Scene.AllNodes)
             {
-                if (node.Id > Scene.MaxNodeId || node.Id < 0)
+                if (node.Id > Scene.NodeCount || node.Id < 0)
                 {
                     continue;
                 }
@@ -228,11 +228,13 @@ namespace GUI.Types.Renderer
 
         public virtual void PostSceneLoad()
         {
+            Scene.UpdateNodeIndices();
             Scene.CalculateLightProbeBindings();
             Scene.CalculateEnvironmentMaps();
 
             if (SkyboxScene != null)
             {
+                SkyboxScene.UpdateNodeIndices();
                 SkyboxScene.CalculateLightProbeBindings();
                 SkyboxScene.CalculateEnvironmentMaps();
             }
@@ -310,7 +312,7 @@ namespace GUI.Types.Renderer
                 Camera = Camera,
                 Framebuffer = MainFramebuffer,
                 Flags = Scene.RenderPassFlags.All,
-                ReplacementShader = Camera.Picker.DebugShader ?? null
+                ReplacementShader = Picker.DebugShader ?? null
             };
 
             using (new GLDebugGroup("Update Loop"))

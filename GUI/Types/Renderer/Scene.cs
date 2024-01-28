@@ -48,7 +48,7 @@ namespace GUI.Types.Renderer
         public bool FogEnabled { get; set; } = true;
 
         public IEnumerable<SceneNode> AllNodes => staticNodes.Concat(dynamicNodes);
-        public uint MaxNodeId { get; private set; } // TODO: optimize node id's (static then dynamic instead of interleaved)
+        public uint NodeCount { get; private set; }
 
         private readonly List<SceneNode> staticNodes = [];
         private readonly List<SceneNode> dynamicNodes = [];
@@ -68,16 +68,23 @@ namespace GUI.Types.Renderer
             {
                 dynamicNodes.Add(node);
                 DynamicOctree.Insert(node, node.BoundingBox);
-                node.Id = (uint)dynamicNodes.Count * 2 - 1;
             }
             else
             {
                 staticNodes.Add(node);
                 StaticOctree.Insert(node, node.BoundingBox);
-                node.Id = (uint)staticNodes.Count * 2;
             }
 
-            MaxNodeId = Math.Max(MaxNodeId, node.Id);
+            NodeCount++;
+        }
+
+        public void UpdateNodeIndices()
+        {
+            var i = 1u;
+            foreach (var node in staticNodes.Concat(dynamicNodes))
+            {
+                node.Id = i++;
+            }
         }
 
         public SceneNode Find(uint id)
@@ -87,28 +94,19 @@ namespace GUI.Types.Renderer
                 return null;
             }
 
-            if (id % 2 == 1)
+            var index = (int)id - 1;
+            if (index < staticNodes.Count)
             {
-                var index = ((int)id + 1) / 2 - 1;
-
-                if (index >= dynamicNodes.Count)
-                {
-                    return null;
-                }
-
-                return dynamicNodes[index];
-            }
-            else
-            {
-                var index = (int)id / 2 - 1;
-
-                if (index >= staticNodes.Count)
-                {
-                    return null;
-                }
-
                 return staticNodes[index];
             }
+
+            index -= staticNodes.Count;
+            if (index < dynamicNodes.Count)
+            {
+                return dynamicNodes[index];
+            }
+
+            return null;
         }
 
         public void Update(float timestep)
@@ -458,7 +456,8 @@ namespace GUI.Types.Renderer
             Span<int> gpuDataToTextureIndex = stackalloc int[LightingConstants.MAX_ENVMAPS];
             var envMapsById = LightingInfo.EnvMaps.OrderByDescending((envMap) => envMap.IndoorOutdoorLevel).ToList();
 
-            LightingInfo.EnvMapBindings = new byte[(MaxNodeId + 1) * LightingConstants.MAX_ENVMAPS];
+            LightingInfo.EnvMapBindings = new byte[(NodeCount + 1) * LightingConstants.MAX_ENVMAPS];
+            var queryList = new List<SceneNode>();
 
             foreach (var envMap in envMapsById)
             {
@@ -470,14 +469,16 @@ namespace GUI.Types.Renderer
 
                 if (LightingInfo.CubemapType == CubemapType.CubemapArray)
                 {
-                    var nodes = StaticOctree.Query(envMap.BoundingBox)
-                        .Concat(DynamicOctree.Query(envMap.BoundingBox)); // TODO: This should actually be done dynamically
+                    StaticOctree.Root.Query(envMap.BoundingBox, queryList);
+                    DynamicOctree.Root.Query(envMap.BoundingBox, queryList); // TODO: This should actually be done dynamically
 
-                    foreach (var node in nodes)
+                    foreach (var node in queryList)
                     {
                         // First act as a visibility buffer, then we trim and sort it
                         LightingInfo.EnvMapBindings[node.Id * LightingConstants.MAX_ENVMAPS + i] = 1;
                     }
+
+                    queryList.Clear();
                 }
 
                 UpdateGpuEnvmapData(envMap, i, envMap.ArrayIndex);
