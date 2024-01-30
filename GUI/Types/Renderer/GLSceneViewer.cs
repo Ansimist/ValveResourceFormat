@@ -212,7 +212,7 @@ namespace GUI.Types.Renderer
         protected virtual void OnLoad(object sender, EventArgs e)
         {
             baseGrid = new InfiniteGrid(Scene);
-            selectedNodeRenderer = new(Scene);
+            selectedNodeRenderer = new(Scene, textRenderer);
 
             Picker = new PickingTexture(Scene.GuiContext, OnPicked);
 

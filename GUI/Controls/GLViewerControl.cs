@@ -33,7 +33,7 @@ namespace GUI.Controls
         public Action<GLViewerControl> GLPostLoad { get; set; }
         private static bool hasCheckedOpenGL;
 
-        private readonly Types.Renderer.TextRenderer textRenderer;
+        protected readonly Types.Renderer.TextRenderer textRenderer;
 
         protected Form FullScreenForm { get; private set; }
         protected PickingTexture Picker { get; set; }
