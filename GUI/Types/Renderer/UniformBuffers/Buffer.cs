@@ -15,19 +15,15 @@ namespace GUI.Types.Renderer.UniformBuffers
         protected Buffer(BufferTarget target, int bindingPoint, string name)
         {
             Target = target;
-            GL.CreateBuffers(1, out int Handle);
+            GL.CreateBuffers(1, out int handle);
+            Handle = handle;
             BindingPoint = bindingPoint;
             Name = name;
 
 #if DEBUG
-            Bind();
             GL.ObjectLabel(ObjectLabelIdentifier.Buffer, Handle, Name.Length, Name);
-            Unbind();
 #endif
         }
-
-        protected void Bind() => GL.BindBuffer(Target, Handle);
-        protected void Unbind() => GL.BindBuffer(Target, 0);
 
         public void SetBlockBinding(Shader shader)
         {

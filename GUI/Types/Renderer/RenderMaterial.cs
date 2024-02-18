@@ -118,6 +118,12 @@ namespace GUI.Types.Renderer
 
             shader ??= Shader;
 
+            if (shader.Name == "vrf.picking")
+            {
+                // Discard material data for picking shader, (blend modes, etc.)
+                return;
+            }
+
             foreach (var (name, defaultTexture) in shader.Default.Textures)
             {
                 var texture = Textures.GetValueOrDefault(name, defaultTexture);
