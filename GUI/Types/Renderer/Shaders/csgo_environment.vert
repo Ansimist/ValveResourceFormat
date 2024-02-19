@@ -46,7 +46,7 @@ out vec4 vTexCoord;
 out vec4 vTexCoord2;
 out vec4 vTintColor_ModelAmount;
 centroid out vec4 vVertexColor_Alpha;
-flat out uint nTransformBufferOffset;
+flat out uvec2 nEnvMap_LpvIndex;
 
 uniform vec4 g_vColorTint = vec4(1.0);
 uniform float g_flModelTintAmount = 1.0;
@@ -177,5 +177,5 @@ void main()
     #endif
 
     vCentroidNormalOut = vNormalOut;
-    nTransformBufferOffset = sceneObjectId;
+    nEnvMap_LpvIndex = uvec2(sceneObjectId, CalculateLightProbeIndex(GetInstanceData()));
 }

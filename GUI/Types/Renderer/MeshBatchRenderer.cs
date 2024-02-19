@@ -193,7 +193,6 @@ namespace GUI.Types.Renderer
                         }
 
                         context.Scene.LightingInfo.SetLightmapTextures(shader);
-                        context.Scene.FogInfo.SetCubemapFogTexture(shader);
                     }
 
                     material = request.Call.Material;
@@ -231,20 +230,15 @@ namespace GUI.Types.Renderer
                 SetInstanceTexture(shader, ReservedTextureSlots.EnvironmentMap, uniforms.EnvmapTexture, envmap);
             }
 
-            if (uniforms.LightProbeVolumeData != -1 && request.Node.LightProbeBinding != null)
+            if (config.LightProbeType < Scene.LightProbeType.ProbeAtlas && uniforms.LightProbeVolumeData != -1 && request.Node.LightProbeBinding != null)
             {
                 var lightProbe = request.Node.LightProbeBinding;
-                lightProbe.SetGpuProbeData(config.LightProbeType == Scene.LightProbeType.ProbeAtlas);
+                SetInstanceTexture(shader, ReservedTextureSlots.Probe1, uniforms.LPVIrradianceTexture, lightProbe.Irradiance);
 
-                if (config.LightProbeType < Scene.LightProbeType.ProbeAtlas)
+                if (config.LightProbeType > Scene.LightProbeType.IndividualProbesIrradianceOnly)
                 {
-                    SetInstanceTexture(shader, ReservedTextureSlots.Probe1, uniforms.LPVIrradianceTexture, lightProbe.Irradiance);
-
-                    if (config.LightProbeType > Scene.LightProbeType.IndividualProbesIrradianceOnly)
-                    {
-                        SetInstanceTexture(shader, ReservedTextureSlots.Probe2, uniforms.LPVIndicesTexture, lightProbe.DirectLightIndices);
-                        SetInstanceTexture(shader, ReservedTextureSlots.Probe3, uniforms.LPVScalarsTexture, lightProbe.DirectLightScalars);
-                    }
+                    SetInstanceTexture(shader, ReservedTextureSlots.Probe2, uniforms.LPVIndicesTexture, lightProbe.DirectLightIndices);
+                    SetInstanceTexture(shader, ReservedTextureSlots.Probe3, uniforms.LPVScalarsTexture, lightProbe.DirectLightScalars);
                 }
             }
 

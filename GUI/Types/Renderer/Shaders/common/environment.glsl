@@ -31,7 +31,7 @@ int _GetInstanceEnvmapDataIndex(int nEnvmap)
     int indexStride = nEnvmap / 4;
     int indexBitwiseOffset = nEnvmap % 4;
 
-    uint fourIndices = g_nEnvMapIndices[(nTransformBufferOffset * (ENVMAP_DATA_STRIDE / 4)) + indexStride];
+    uint fourIndices = g_nEnvMapIndices[(nEnvMap_LpvIndex.x * (ENVMAP_DATA_STRIDE / 4)) + indexStride];
 
     return int((fourIndices >> (indexBitwiseOffset * 8)) & 0xff);
 }

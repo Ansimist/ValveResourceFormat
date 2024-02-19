@@ -28,6 +28,11 @@ int GetTransformBufferOffset(PerInstancePackedShaderData_t packedData)
     return int(packedData.m_Data[1]);
 }
 
+int CalculateLightProbeIndex(PerInstancePackedShaderData_t packedData)
+{
+    return int(packedData.m_Data[2]);
+}
+
 mat4 CalculateObjectToWorldMatrix(int nTransformBufferOffset)
 {
     return transform[nTransformBufferOffset];
@@ -75,6 +80,7 @@ struct InstanceData_t
 {
     vec4 vTint;
     int nTransformBufferOffset;
+    int nLightProbeIndex;
 };
 
 InstanceData_t DecodePackedInstanceData(PerInstancePackedShaderData_t packedData)
@@ -82,5 +88,6 @@ InstanceData_t DecodePackedInstanceData(PerInstancePackedShaderData_t packedData
     InstanceData_t extraShaderData;
     extraShaderData.vTint = UnpackTintColorRGBA32(packedData.m_Data[0]);
     extraShaderData.nTransformBufferOffset = GetTransformBufferOffset(packedData);
+    extraShaderData.nLightProbeIndex = CalculateLightProbeIndex(packedData);
     return extraShaderData;
 }

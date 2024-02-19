@@ -8,7 +8,6 @@ namespace GUI.Types.Renderer.UniformBuffers
     {
         View = 0,
         Lighting = 1,
-        LightProbe = 2,
         EnvmapBinding = 3,
         InstanceBuffer = 4,
         TransformBuffer = 5,
@@ -48,7 +47,7 @@ namespace GUI.Types.Renderer.UniformBuffers
         {
             WriteToCpuBuffer();
             GL.NamedBufferData(Handle, Size, cpuBuffer, BufferUsageHint.StaticDraw);
-            GL.BindBufferBase(BufferRangeTarget.UniformBuffer, BindingPoint, Handle);
+            BindBufferBase();
         }
 
         public void Update()

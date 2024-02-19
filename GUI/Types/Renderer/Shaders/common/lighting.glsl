@@ -29,48 +29,52 @@
         uniform sampler3D g_tLPV_Shadows;
     #endif
 
-    layout(std140, binding = 2) uniform LightProbeVolume
+    struct LightProbe
     {
-        uniform mat4 g_matLightProbeVolumeWorldToLocal;
-        //uniform vec4 g_vLightProbeVolumeColor;
-
-        #if (LightmapGameVersionNumber == 1)
-            vec4 g_vLightProbeVolumeLayer0TextureMin;
-            vec4 g_vLightProbeVolumeLayer0TextureMax;
-        #elif (LightmapGameVersionNumber == 2)
-            vec4 g_vLightProbeVolumeBorderMin;
-            vec4 g_vLightProbeVolumeBorderMax;
-            vec4 g_vLightProbeVolumeAtlasScale;
-            vec4 g_vLightProbeVolumeAtlasOffset;
+        vec3 Position;
+        vec3 Min; vec3 Max;
+        #if (LightmapGameVersionNumber == 2)
+            vec3 AtlasOffset; vec3 AtlasScale;
         #endif
     };
 
-    vec3 CalculateProbeSampleCoords(vec3 fragPosition)
+    LightProbe GetProbe(vec3 fragPosition)
     {
-        vec3 vLightProbeLocalPos = mat4x3(g_matLightProbeVolumeWorldToLocal) * vec4(fragPosition, 1.0);
-        return vLightProbeLocalPos;
+        LightProbeVolumeData data = g_vLightProbeVolumeData[nEnvMap_LpvIndex.y];
+
+        LightProbe probe;
+        probe.Position = mat4x3(data.WorldToLocalNormalizer) * vec4(fragPosition, 1.0);
+        probe.Min = data.Min.xyz;
+        probe.Max = data.Max.xyz;
+
+        #if (LightmapGameVersionNumber == 2)
+            probe.AtlasOffset = data.AtlasOffset.xyz;
+            probe.AtlasScale = data.AtlasScale.xyz;
+        #endif
+
+        return probe;
     }
 
     #if (LightmapGameVersionNumber == 2)
         vec3 CalculateAtlasProbeShadowCoords(vec3 fragPosition)
         {
-            vec3 vLightProbeLocalPos = CalculateProbeSampleCoords(fragPosition);
+            LightProbe probe = GetProbe(fragPosition);
 
-            return fma(saturate(vLightProbeLocalPos), g_vLightProbeVolumeAtlasScale.xyz, g_vLightProbeVolumeAtlasOffset.xyz);
+            return fma(saturate(probe.Position), probe.AtlasScale, probe.AtlasOffset);
         }
 
         vec3 CalculateAtlasProbeIndirectCoords(vec3 fragPosition)
         {
-            vec3 indirectCoords = CalculateProbeSampleCoords(fragPosition);
+            LightProbe probe = GetProbe(fragPosition);
 
-            indirectCoords.z /= 6;
-            indirectCoords = clamp(indirectCoords, g_vLightProbeVolumeBorderMin.xyz, g_vLightProbeVolumeBorderMax.xyz);
+            probe.Position.z /= 6;
+            probe.Position = clamp(probe.Position, probe.Min, probe.Max);
 
-            indirectCoords.z *= 6;
-            indirectCoords = fma(indirectCoords, g_vLightProbeVolumeAtlasScale.xyz, g_vLightProbeVolumeAtlasOffset.xyz);
+            probe.Position.z *= 6;
+            probe.Position = fma(probe.Position, probe.AtlasScale, probe.AtlasOffset);
 
-            indirectCoords.z /= 6;
-            return indirectCoords;
+            probe.Position.z /= 6;
+            return probe.Position;
         }
     #endif
 #endif
@@ -85,7 +89,6 @@ vec3 getSunColor()
     return SrgbGammaToLinear(vLightColor.rgb) * vLightColor.a;
 }
 
-
 // This should contain our direct lighting loop
 void CalculateDirectLighting(inout LightingTerms_t lighting, inout MaterialProperties_t mat)
 {
@@ -99,7 +102,7 @@ void CalculateDirectLighting(inout LightingTerms_t lighting, inout MaterialPrope
             vec4 dls = texture(g_tDirectLightStrengths, vLightmapUVScaled);
             vec4 dli = texture(g_tDirectLightIndices, vLightmapUVScaled);
         #elif (D_BAKED_LIGHTING_FROM_PROBE == 1)
-            vec3 vLightProbeShadowCoords = CalculateProbeSampleCoords(mat.PositionWS);
+            vec3 vLightProbeShadowCoords = GetProbe(mat.PositionWS).Position;
             vec4 dls = textureLod(g_tLPV_Scalars, vLightProbeShadowCoords, 0.0);
             //vec4 dli = textureLod(g_tLPV_Indices, vLightProbeShadowCoords, 0.0);
             vec4 dli = vec4(0.12, 0.34, 0.56, 0); // Indices aren't working right now, just assume sun is in alpha.
@@ -213,9 +216,9 @@ void CalculateIndirectLighting(inout LightingTerms_t lighting, inout MaterialPro
     lighting.DiffuseIndirect = vPerVertexLightingOut.rgb;
 #elif (D_BAKED_LIGHTING_FROM_PROBE == 1)
     #if (LightmapGameVersionNumber == 0 || LightmapGameVersionNumber == 1)
-        vec3 vIndirectSampleCoords = CalculateProbeSampleCoords(mat.PositionWS);
+        vec3 vIndirectSampleCoords = GetProbe(mat.PositionWS).Position;
         vIndirectSampleCoords.z /= 6;
-        // clamp(vIndirectSampleCoords, g_vLightProbeVolumeLayer0TextureMin.xyz, g_vLightProbeVolumeLayer0TextureMax.xyz);
+        // clamp(vIndirectSampleCoords, probe.Min, probe.Max);
     #elif (LightmapGameVersionNumber == 2)
         vec3 vIndirectSampleCoords = CalculateAtlasProbeIndirectCoords(mat.PositionWS);
     #endif

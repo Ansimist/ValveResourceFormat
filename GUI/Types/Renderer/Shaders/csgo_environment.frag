@@ -159,7 +159,7 @@ uniform float g_flModelTintAmount = 1.0;
 #include "common/texturing.glsl"
 #include "common/pbr.glsl"
 
-flat in uint nTransformBufferOffset;
+flat in uvec2 nEnvMap_LpvIndex;
 #include "common/environment.glsl"
 
 #include "common/fog.glsl"

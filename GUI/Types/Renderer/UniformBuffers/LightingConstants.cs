@@ -33,6 +33,10 @@ namespace GUI.Types.Renderer.UniformBuffers
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = MAX_ENVMAPS)]
         public readonly Vector4[] EnvMapNormalizationSH;
 
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = MAX_ENVMAPS)]
+        public readonly LPVData[] LightProbeVolume;
+
+        public record struct LPVData(Matrix4x4 WorldToLocalNormalized, Vector4 Min, Vector4 Max, Vector4 Scale, Vector4 Offset);
         public LightingConstants()
         {
             EnvMapWorldToLocal = new Matrix4x4[MAX_ENVMAPS];
@@ -42,6 +46,7 @@ namespace GUI.Types.Renderer.UniformBuffers
             EnvMapProxySphere = new Vector4[MAX_ENVMAPS];
             EnvMapColorRotated = new Vector4[MAX_ENVMAPS];
             EnvMapNormalizationSH = new Vector4[MAX_ENVMAPS];
+            LightProbeVolume = new LPVData[MAX_ENVMAPS];
         }
     }
 }

@@ -13,8 +13,10 @@ namespace GUI.Types.Renderer.UniformBuffers
         public float Time;
         public Color4 ClearColor = Color4.Black;
 
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
-        public bool[] FogTypeEnabled;
+        public bool VolumetricFogActive;
+        public bool GradientFogActive;
+        public bool CubeFogActive;
+        public bool OtherUnused;
         public Vector4 GradientFogBiasAndScale;
         public Vector4 GradientFogColor_Opacity;
         public Vector2 GradientFogExponents;
@@ -23,10 +25,5 @@ namespace GUI.Types.Renderer.UniformBuffers
         public Vector4 CubeFog_Height_Offset_Scale_Exponent_Log2Mip;
         public Matrix4x4 CubeFogSkyWsToOs;
         public Vector4 CubeFogCullingParams_ExposureBias_MaxOpacity;
-
-        public ViewConstants()
-        {
-            FogTypeEnabled = new bool[4];
-        }
     }
 }

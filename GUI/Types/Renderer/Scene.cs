@@ -47,6 +47,11 @@ namespace GUI.Types.Renderer
         public bool DepthPassEnabled { get; set; } = true;
         public bool FogEnabled { get; set; } = true;
 
+        private StorageBuffer instanceBuffer;
+        private StorageBuffer transformBuffer;
+        private StorageBuffer envMapBindingBuffer;
+        private UniformBuffer<LightingConstants> lightingBuffer;
+
         public IEnumerable<SceneNode> AllNodes => staticNodes.Concat(dynamicNodes);
         public uint NodeCount { get; private set; }
 
@@ -124,6 +129,7 @@ namespace GUI.Types.Renderer
                 node.Update(updateContext);
                 DynamicOctree.Update(node, oldBox, node.BoundingBox);
             }
+
         }
 
         private readonly List<SceneNode> CullResults = [];
@@ -280,29 +286,26 @@ namespace GUI.Types.Renderer
             MeshBatchRenderer.Render(depthPassOpaqueCalls, renderContext);
         }
 
-        public void RenderOpaqueLayer(RenderContext renderContext)
+        public void RenderOpaqueLayer(RenderContext renderContext, bool depthPrepassed = false)
         {
             var camera = renderContext.Camera;
 
             using (new GLDebugGroup("Opaque Render"))
             {
-                const string DepthPass = "Depth Pass";
-                var doDepthPrepass = DepthPassEnabled && (renderContext.Flags & Scene.RenderPassFlags.DepthPassAllowed) != 0;
-
-                if (doDepthPrepass)
+                if (depthPrepassed)
                 {
+                    using var _ = new GLDebugGroup("Render Depth Prepassed");
                     GL.DepthMask(false);
-                    GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 0, DepthPass.Length, DepthPass);
-                }
+                    GL.DepthFunc(DepthFunction.Gequal);
 
-                // Render calls that qualify for depth prepass
-                MeshBatchRenderer.Render(depthPassOpaqueCalls, renderContext);
+                    MeshBatchRenderer.Render(depthPassOpaqueCalls, renderContext);
 
-                if (doDepthPrepass)
-                {
                     GL.DepthMask(true);
                     GL.DepthFunc(DepthFunction.Greater);
-                    GL.PopDebugGroup();
+                }
+                else
+                {
+                    MeshBatchRenderer.Render(depthPassOpaqueCalls, renderContext);
                 }
 
                 MeshBatchRenderer.Render(renderOpaqueDrawCalls, renderContext);
@@ -374,19 +377,83 @@ namespace GUI.Types.Renderer
             }
         }
 
-        public void SetFogConstants(ViewConstants viewConstants)
+        public void CreateBuffers()
         {
-            FogInfo.SetFogUniforms(viewConstants, FogEnabled);
+            lightingBuffer = new(ReservedBufferSlots.Lighting)
+            {
+                Data = LightingInfo.LightingData
+            };
+
+            envMapBindingBuffer = new(ReservedBufferSlots.EnvmapBinding);
+            instanceBuffer = new(ReservedBufferSlots.InstanceBuffer);
+            transformBuffer = new(ReservedBufferSlots.TransformBuffer);
+        }
+
+        [System.Runtime.CompilerServices.InlineArray(SizeInBytes / 4)]
+        public struct PerInstancePackedData
+        {
+            public const int SizeInBytes = 8 * 4;
+            private uint data;
+
+            public Color32 TintAlpha { readonly get => new(this[0]); set => this[0] = value.PackedValue; }
+            public int TransformBufferIndex { readonly get => (int)this[1]; set => this[1] = (uint)value; }
+            public int LightProbeBinding { readonly get => (int)this[2]; set => this[2] = (uint)value; }
+
+            //public int EnvMapCount { readonly get => (int)this[2]; set => this[2] = (uint)value; }
+            //public bool CustomLightingOrigin { readonly get => (this[3] & 1) != 0; set => PackBit(ref this[3], value); }
+
+            private static void PackBit(ref uint @uint, bool value)
+            {
+                @uint = (@uint & ~1u) | (value ? 1u : 0u);
+            }
+        }
+
+        public void UpdateInstanceBuffers()
+        {
+            var transformData = new List<Matrix4x4>() { Matrix4x4.Identity };
+
+            var instanceBufferData = new PerInstancePackedData[NodeCount + 1];
+
+            foreach (var node in AllNodes)
+            {
+                if (node.Id > NodeCount || node.Id < 0)
+                {
+                    continue;
+                }
+
+                ref var instanceData = ref instanceBufferData[node.Id];
+
+                if (node.Transform.IsIdentity)
+                {
+                    instanceData.TransformBufferIndex = 0;
+                }
+                else
+                {
+                    instanceData.TransformBufferIndex = transformData.Count;
+                    transformData.Add(node.Transform);
+                }
+
+                //instanceData.TintAlpha = node.TintAlpha;
+                //instanceData.EnvMapCount = node.EnvMapCount;
+                // TODO: numbones
+                instanceData.LightProbeBinding = LightingInfo.LightProbes.IndexOf(node.LightProbeBinding);
+            }
+
+            instanceBuffer.Create(instanceBufferData, PerInstancePackedData.SizeInBytes);
+            transformBuffer.Create(transformData.ToArray(), 64);
+
+            envMapBindingBuffer.Create(LightingInfo.EnvMapBindings, 1);
         }
 
         public void CalculateLightProbeBindings()
         {
-            if (LightingInfo.LightProbes.Count == 0)
+            var ProbeList = LightingInfo.LightProbes;
+            if (ProbeList.Count == 0)
             {
                 return;
             }
 
-            LightingInfo.LightProbes.Sort((a, b) => a.HandShake.CompareTo(b.HandShake));
+            ProbeList.Sort((a, b) => a.HandShake.CompareTo(b.HandShake));
 
             foreach (var node in AllNodes)
             {
@@ -396,10 +463,10 @@ namespace GUI.Types.Renderer
                     continue;
                 }
 
-                if (LightingInfo.LightProbeType == LightProbeType.IndividualProbesIrradianceOnly && precomputedHandshake <= LightingInfo.LightProbes.Count)
+                if (LightingInfo.LightProbeType == LightProbeType.IndividualProbesIrradianceOnly && precomputedHandshake <= ProbeList.Count)
                 {
                     // SteamVR Home node handshake as probe index
-                    node.LightProbeBinding = LightingInfo.LightProbes[precomputedHandshake - 1];
+                    node.LightProbeBinding = ProbeList[precomputedHandshake - 1];
                     continue;
                 }
 
@@ -410,7 +477,7 @@ namespace GUI.Types.Renderer
                 }
             }
 
-            var sortedLightProbes = LightingInfo.LightProbes
+            var sortedLightProbes = ProbeList
                 .OrderByDescending(static lpv => lpv.IndoorOutdoorLevel)
                 .ThenBy(static lpv => lpv.AtlasSize.LengthSquared());
 
@@ -424,17 +491,25 @@ namespace GUI.Types.Renderer
                 {
                     node.LightProbeBinding ??= probe;
                 }
+
+                var index = ProbeList.IndexOf(probe);
+
+                probe.SetGpuProbeData(
+                    LightingInfo.LightProbeType == LightProbeType.ProbeAtlas,
+                    ref LightingInfo.LightingData.LightProbeVolume[index]
+                );
             }
         }
 
         public void CalculateEnvironmentMaps()
         {
-            if (LightingInfo.EnvMaps.Count == 0)
+            var EnvMapList = LightingInfo.EnvMaps;
+            if (EnvMapList.Count == 0)
             {
                 return;
             }
 
-            var firstTexture = LightingInfo.EnvMaps.First().EnvMapTexture;
+            var firstTexture = EnvMapList.First().EnvMapTexture;
 
             LightingInfo.LightingData.EnvMapSizeConstants = new Vector4(
                 firstTexture.NumMipLevels - 1,
@@ -446,7 +521,7 @@ namespace GUI.Types.Renderer
             int ArrayIndexCompare(SceneEnvMap a, SceneEnvMap b) => a.ArrayIndex.CompareTo(b.ArrayIndex);
             int HandShakeCompare(SceneEnvMap a, SceneEnvMap b) => a.HandShake.CompareTo(b.HandShake);
 
-            LightingInfo.EnvMaps.Sort(LightingInfo.CubemapType switch
+            EnvMapList.Sort(LightingInfo.CubemapType switch
             {
                 CubemapType.CubemapArray => ArrayIndexCompare,
                 _ => HandShakeCompare
@@ -454,7 +529,7 @@ namespace GUI.Types.Renderer
 
             var i = 0;
             Span<int> gpuDataToTextureIndex = stackalloc int[LightingConstants.MAX_ENVMAPS];
-            var envMapsById = LightingInfo.EnvMaps.OrderByDescending((envMap) => envMap.IndoorOutdoorLevel).ToList();
+            var envMapsById = EnvMapList.OrderByDescending((envMap) => envMap.IndoorOutdoorLevel).ToList();
 
             LightingInfo.EnvMapBindings = new byte[(NodeCount + 1) * LightingConstants.MAX_ENVMAPS];
             var queryList = new List<SceneNode>();
@@ -497,10 +572,10 @@ namespace GUI.Types.Renderer
                 if (precomputedHandshake > 0)
                 {
                     if (LightingInfo.CubemapType == CubemapType.IndividualCubemaps
-                        && precomputedHandshake <= LightingInfo.EnvMaps.Count)
+                        && precomputedHandshake <= EnvMapList.Count)
                     {
                         // SteamVR Home node handshake as envmap index
-                        node.EnvMap = preComputed = LightingInfo.EnvMaps[precomputedHandshake - 1];
+                        node.EnvMap = preComputed = EnvMapList[precomputedHandshake - 1];
                     }
                     else if (LightingInfo.EnvMapHandshakes.TryGetValue(precomputedHandshake, out preComputed))
                     {
@@ -522,7 +597,7 @@ namespace GUI.Types.Renderer
                 else if (node.LightingOrigin.HasValue || LightingInfo.CubemapType == CubemapType.IndividualCubemaps)
                 {
                     var objectCenter = node.LightingOrigin ?? node.BoundingBox.Center;
-                    var closest = LightingInfo.EnvMaps.OrderBy(e => Vector3.Distance(e.BoundingBox.Center, objectCenter)).First();
+                    var closest = EnvMapList.OrderBy(e => Vector3.Distance(e.BoundingBox.Center, objectCenter)).First();
                     node.EnvMap = closest;
                     fixedEnvMapIndex = gpuDataToTextureIndex.IndexOf(closest.ArrayIndex);
                 }
@@ -617,6 +692,27 @@ namespace GUI.Types.Renderer
 
             // TODO
             LightingInfo.LightingData.EnvMapNormalizationSH[index] = new Vector4(0, 0, 0, 1);
+        }
+
+        public void SetFogConstants(ViewConstants viewConstants)
+        {
+            FogInfo.SetFogUniforms(viewConstants, FogEnabled);
+        }
+
+        public void SetSceneBuffers()
+        {
+            lightingBuffer.BindBufferBase();
+            envMapBindingBuffer.BindBufferBase();
+            instanceBuffer.BindBufferBase();
+            transformBuffer.BindBufferBase();
+        }
+
+        public void Dispose()
+        {
+            lightingBuffer?.Dispose();
+            envMapBindingBuffer?.Dispose();
+            instanceBuffer?.Dispose();
+            transformBuffer?.Dispose();
         }
     }
 }

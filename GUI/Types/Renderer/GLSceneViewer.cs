@@ -29,11 +29,7 @@ namespace GUI.Types.Renderer
         private bool showDynamicOctree;
         private Frustum lockedCullFrustum;
 
-        private StorageBuffer instanceBuffer;
-        private StorageBuffer transformBuffer;
-        private StorageBuffer envMapBindingBuffer;
         protected UniformBuffer<ViewConstants> viewBuffer;
-        private UniformBuffer<LightingConstants> lightingBuffer;
 
         public List<(ReservedTextureSlots Slot, string Name, RenderTexture Texture)> Textures { get; } = [];
 
@@ -103,11 +99,9 @@ namespace GUI.Types.Renderer
         {
             if (disposing)
             {
-                instanceBuffer?.Dispose();
-                transformBuffer?.Dispose();
-                envMapBindingBuffer?.Dispose();
+                Scene.Dispose();
+                SkyboxScene?.Dispose();
                 viewBuffer?.Dispose();
-                lightingBuffer?.Dispose();
 
                 GLPaint -= OnPaint;
 
@@ -124,66 +118,9 @@ namespace GUI.Types.Renderer
         private void CreateBuffers()
         {
             viewBuffer = new(ReservedBufferSlots.View);
-            lightingBuffer = new(ReservedBufferSlots.Lighting);
-            envMapBindingBuffer = new(ReservedBufferSlots.EnvmapBinding);
-            instanceBuffer = new(ReservedBufferSlots.InstanceBuffer);
-            transformBuffer = new(ReservedBufferSlots.TransformBuffer);
         }
 
-        [System.Runtime.CompilerServices.InlineArray(SizeInBytes / 4)]
-        public struct PerInstancePackedData
-        {
-            public const int SizeInBytes = 32;
-            private uint data;
-
-            public Color32 TintAlpha { readonly get => new(this[0]); set => this[0] = value.PackedValue; }
-            public int TransformBufferIndex { readonly get => (int)this[1]; set => this[1] = (uint)value; }
-            //public int EnvMapCount { readonly get => (int)this[2]; set => this[2] = (uint)value; }
-            //public bool CustomLightingOrigin { readonly get => (this[3] & 1) != 0; set => PackBit(ref this[3], value); }
-
-            private static void PackBit(ref uint @uint, bool value)
-            {
-                @uint = (@uint & ~1u) | (value ? 1u : 0u);
-            }
-        }
-
-        void UpdateInstanceBuffers()
-        {
-            var transformData = new List<Matrix4x4>() { Matrix4x4.Identity };
-
-            var instanceBufferData = new PerInstancePackedData[Scene.NodeCount + 1];
-
-            foreach (var node in Scene.AllNodes)
-            {
-                if (node.Id > Scene.NodeCount || node.Id < 0)
-                {
-                    continue;
-                }
-
-                ref var instanceData = ref instanceBufferData[node.Id];
-
-                if (node.Transform.IsIdentity)
-                {
-                    instanceData.TransformBufferIndex = 0;
-                }
-                else
-                {
-                    instanceData.TransformBufferIndex = transformData.Count;
-                    transformData.Add(node.Transform);
-                }
-
-                //instanceData.TintAlpha = node.TintAlpha;
-                //instanceData.EnvMapCount = node.EnvMapCount;
-                // TODO: numbones
-            }
-
-            instanceBuffer.Create(instanceBufferData, PerInstancePackedData.SizeInBytes);
-            transformBuffer.Create(transformData.ToArray(), 64);
-
-            envMapBindingBuffer.Create(Scene.LightingInfo.EnvMapBindings, 1);
-        }
-
-        void UpdateSceneBuffersGpu(Scene scene, Camera camera)
+        void UpdatePerViewGpuBuffer(Scene scene, Camera camera)
         {
             camera.SetViewConstants(viewBuffer.Data);
             scene.SetFogConstants(viewBuffer.Data);
@@ -223,7 +160,8 @@ namespace GUI.Types.Renderer
             using var cubeFogResource = new Resource() { FileName = "default_cube.vtex_c" };
             cubeFogResource.Read(cubeFogStream);
 
-            Scene.FogInfo.DefaultFogTexture = GuiContext.MaterialLoader.LoadTexture(cubeFogResource);
+            var defaultCubeFogTexture = GuiContext.MaterialLoader.LoadTexture(cubeFogResource);
+            Textures.Add(new(ReservedTextureSlots.FogCubeTexture, "g_tFogCubeTexture", defaultCubeFogTexture));
         }
 
         public virtual void PostSceneLoad()
@@ -231,15 +169,23 @@ namespace GUI.Types.Renderer
             Scene.UpdateNodeIndices();
             Scene.CalculateLightProbeBindings();
             Scene.CalculateEnvironmentMaps();
+            Scene.CreateBuffers();
+            Scene.UpdateInstanceBuffers();
 
             if (SkyboxScene != null)
             {
                 SkyboxScene.UpdateNodeIndices();
                 SkyboxScene.CalculateLightProbeBindings();
                 SkyboxScene.CalculateEnvironmentMaps();
+                SkyboxScene.CreateBuffers();
+                SkyboxScene.UpdateInstanceBuffers();
             }
 
-            UpdateInstanceBuffers();
+            if (Scene.FogInfo.CubeFogActive)
+            {
+                Textures.RemoveAll(t => t.Slot == ReservedTextureSlots.FogCubeTexture);
+                Textures.Add(new(ReservedTextureSlots.FogCubeTexture, "g_tFogCubeTexture", Scene.FogInfo.CubemapFog.CubemapFogTexture));
+            }
 
             if (Scene.AllNodes.Any() && this is not GLWorldViewer)
             {
@@ -279,7 +225,7 @@ namespace GUI.Types.Renderer
         protected virtual void OnLoad(object sender, EventArgs e)
         {
             baseGrid = new InfiniteGrid(Scene);
-            baseBackground = new SceneBackground(Scene);
+            Skybox2D = baseBackground = new SceneBackground(Scene);
             selectedNodeRenderer = new(Scene);
 
             Picker = new PickingTexture(Scene.GuiContext, OnPicked);
@@ -324,12 +270,15 @@ namespace GUI.Types.Renderer
 
                 Scene.CollectSceneDrawCalls(Camera, lockedCullFrustum);
                 SkyboxScene?.CollectSceneDrawCalls(Camera, lockedCullFrustum);
+
+                UpdatePerViewGpuBuffer(Scene, Camera);
             }
 
             using (new GLDebugGroup("Scenes Render"))
             {
                 if (Picker.ActiveNextFrame)
                 {
+                    using var _ = new GLDebugGroup("Picking Render");
                     renderContext.ReplacementShader = Picker.Shader;
                     renderContext.Framebuffer = Picker;
 
@@ -376,9 +325,7 @@ namespace GUI.Types.Renderer
                 Scene = Scene,
             };
 
-            UpdateSceneBuffersGpu(Scene, Camera);
-            lightingBuffer.Data = Scene.LightingInfo.LightingData;
-
+            Scene.SetSceneBuffers();
             Scene.RenderOpaqueLayer(renderContext);
             Scene.RenderTranslucentLayer(renderContext);
         }
@@ -389,90 +336,83 @@ namespace GUI.Types.Renderer
             renderContext.Framebuffer.Clear();
 
             GL.DepthRange(0.05, 1);
-            UpdateSceneBuffersGpu(Scene, Camera);
+            Scene.SetSceneBuffers();
 
-            if (Scene.DepthPassEnabled && (renderContext.Flags & Scene.RenderPassFlags.DepthPassAllowed) != 0)
+            var RenderDepthPrepass = Scene.DepthPassEnabled && (renderContext.Flags & Scene.RenderPassFlags.DepthPassAllowed) != 0;
+            if (RenderDepthPrepass)
             {
-#if DEBUG
-                const string DepthPass = "Depth Pass";
-                GL.PushDebugGroup(DebugSourceExternal.DebugSourceApplication, 1, DepthPass.Length, DepthPass);
-#endif
+                using (new GLDebugGroup("Depth Prepass Render"))
+                {
+                    GL.ColorMask(false, false, false, false);
+                    GL.DepthMask(true);
 
-                GL.ColorMask(false, false, false, false);
-                GL.DepthMask(true);
-                GL.DepthFunc(DepthFunction.Greater);
+                    var oldReplacementShader = renderContext.ReplacementShader;
+                    renderContext.ReplacementShader = depthOnlyShader;
 
-                var oldReplacementShader = renderContext.ReplacementShader;
-                renderContext.ReplacementShader = depthOnlyShader;
+                    renderContext.Scene = Scene;
+                    Scene.DepthPassOpaque(renderContext);
 
-                renderContext.Scene = Scene;
-                Scene.DepthPassOpaque(renderContext);
-
-                renderContext.ReplacementShader = oldReplacementShader;
-
-                GL.ColorMask(true, true, true, true);
-                GL.DepthFunc(DepthFunction.Gequal);
-
-#if DEBUG
-                GL.PopDebugGroup();
-#endif
+                    renderContext.ReplacementShader = oldReplacementShader;
+                    GL.ColorMask(true, true, true, true);
+                }
             }
 
-            if (IsWireframe && (renderContext.Flags & Scene.RenderPassFlags.WireframeAllowed) != 0)
+            var RenderWireframe = IsWireframe && (renderContext.Flags & Scene.RenderPassFlags.WireframeAllowed) != 0;
+            if (RenderWireframe)
             {
                 GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
             }
 
-            GL.DepthRange(0.05, 1);
-            UpdateSceneBuffersGpu(Scene, Camera);
-            lightingBuffer.Data = Scene.LightingInfo.LightingData;
-
             using (new GLDebugGroup("Main Scene Opaque Render"))
             {
                 renderContext.Scene = Scene;
-                Scene.RenderOpaqueLayer(renderContext);
+                Scene.RenderOpaqueLayer(renderContext, RenderDepthPrepass);
             }
 
-            // 3D Sky
-            GL.DepthRange(0, 0.05);
-            if (ShowSkybox && SkyboxScene != null)
+            using (new GLDebugGroup("Sky Render"))
             {
-                using (new GLDebugGroup("3D Sky Scene Render"))
+                GL.DepthRange(0, 0.05);
+                renderContext.ReplacementShader?.SetUniform1("isSkybox", 1u);
+
+                var Render3DSkybox = ShowSkybox && SkyboxScene != null;
+
+                if (Render3DSkybox)
                 {
-                    lightingBuffer.Data = SkyboxScene.LightingInfo.LightingData;
-                    renderContext.Scene = SkyboxScene;
-                    renderContext.ReplacementShader?.SetUniform1("isSkybox", 1u);
+                    using (new GLDebugGroup("3D Sky Scene Render"))
+                    {
+                        SkyboxScene.SetSceneBuffers();
+                        renderContext.Scene = SkyboxScene;
 
-                    SkyboxScene.RenderOpaqueLayer(renderContext);
-                    SkyboxScene.RenderTranslucentLayer(renderContext);
-
-                    lightingBuffer.Data = Scene.LightingInfo.LightingData;
-                    renderContext.Scene = Scene;
-                    renderContext.ReplacementShader?.SetUniform1("isSkybox", 0u);
+                        SkyboxScene.RenderOpaqueLayer(renderContext);
+                    }
                 }
-            }
 
-            // 2D Sky
-            if (Skybox2D is not null)
-            {
                 using (new GLDebugGroup("2D Sky Render"))
                 {
                     Skybox2D.Render();
                 }
-            }
-            else
-            {
-                baseBackground.Render();
-            }
 
-            GL.DepthRange(0.05, 1);
+                if (Render3DSkybox)
+                {
+                    using (new GLDebugGroup("3D Sky Scene Render"))
+                    {
+                        SkyboxScene.RenderTranslucentLayer(renderContext);
+                    }
+
+                    Scene.SetSceneBuffers();
+                    renderContext.Scene = Scene;
+                }
+
+                renderContext.ReplacementShader?.SetUniform1("isSkybox", 0u);
+                GL.DepthRange(0.05, 1);
+            }
 
             using (new GLDebugGroup("Main Scene Translucent Render"))
             {
                 Scene.RenderTranslucentLayer(renderContext);
             }
 
-            if (IsWireframe && (renderContext.Flags & Scene.RenderPassFlags.WireframeAllowed) != 0)
+            if (RenderWireframe)
             {
                 GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
             }

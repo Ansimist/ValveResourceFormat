@@ -252,7 +252,7 @@ uniform sampler2D g_tTintMask;
 #include "common/pbr.glsl"
 #include "common/fog.glsl"
 
-flat in uint nTransformBufferOffset;
+flat in uvec2 nEnvMap_LpvIndex;
 #include "common/environment.glsl"
 
 // Must be last

@@ -25,6 +25,11 @@ namespace GUI.Types.Renderer.UniformBuffers
 #endif
         }
 
+        public void BindBufferBase()
+        {
+            GL.BindBufferBase((BufferRangeTarget)Target, BindingPoint, Handle);
+        }
+
         public void SetBlockBinding(Shader shader)
         {
             var blockIndex = shader.GetUniformBlockIndex(Name);
