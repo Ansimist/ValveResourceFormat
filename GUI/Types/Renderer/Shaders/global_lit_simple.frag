@@ -31,7 +31,7 @@ in vec2 vTexCoordOut;
 #if (F_PAINT_VERTEX_COLORS == 1)
     in vec4 vVertexColorOut;
 #endif
-in vec4 vTintColorFadeOut;
+flat in vec4 vTintColorFadeOut;
 
 out vec4 outputColor;
 

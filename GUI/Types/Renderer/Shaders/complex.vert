@@ -92,8 +92,6 @@ uniform vec4 g_vColorTint = vec4(1.0);
 uniform float g_flModelTintAmount = 1.0;
 uniform float g_flFadeExponent = 1.0;
 
-uniform vec4 vTint;
-
 uniform vec4 g_vTexCoordOffset;
 uniform vec4 g_vTexCoordScale = vec4(1.0);
 uniform vec4 g_vTexCoordScrollSpeed;
@@ -154,7 +152,7 @@ vec2 GetAnimatedUVs(vec2 texCoords)
     return texCoords + g_vTexCoordScrollSpeed.xy * g_flTime;
 }
 
-vec4 GetTintColor()
+vec4 GetTintColor(vec4 vTint)
 {
     vec4 TintFade = vec4(1.0);
 #if F_NOTINT == 0
@@ -180,7 +178,9 @@ vec4 GetTintColor()
 
 void main()
 {
-    mat4 skinTransform = CalculateObjectToWorldMatrix() * getSkinMatrix();
+    InstanceData_t instance = DecodePackedInstanceData(GetInstanceData());
+
+    mat4 skinTransform = CalculateObjectToWorldMatrix(instance.nTransformBufferOffset) * getSkinMatrix();
     vec4 fragPosition = skinTransform * vec4(vPOSITION + getMorphOffset(), 1.0);
     gl_Position = g_matViewToProjection * fragPosition;
     vFragPosition = fragPosition.xyz / fragPosition.w;
@@ -215,7 +215,7 @@ void main()
     vPerVertexLightingOut = pow2(Light);
 #endif
 
-    vVertexColorOut = GetTintColor();
+    vVertexColorOut = GetTintColor(instance.vTint);
 
 #if (F_PAINT_VERTEX_COLORS == 1)
     // TODO: ApplyVBIBDefaults

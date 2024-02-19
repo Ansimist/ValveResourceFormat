@@ -5,7 +5,6 @@
 //? #include "LightingConstants.glsl"
 //? #include "lighting_common.glsl"
 //? #include "pbr.glsl"
-//? #include "instancing.glsl"
 //? #include "lighting.glsl"
 
 #define SCENE_CUBEMAP_TYPE 0 // 0 = None, 1 = Per-batch cube map, 2 = Per-scene cube map array

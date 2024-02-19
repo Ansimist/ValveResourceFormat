@@ -99,7 +99,7 @@ namespace GUI.Types.Renderer
         {
             if (disposing)
             {
-                Scene.Dispose();
+                Scene?.Dispose();
                 SkyboxScene?.Dispose();
                 viewBuffer?.Dispose();
 

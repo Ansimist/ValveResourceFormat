@@ -433,9 +433,14 @@ namespace GUI.Types.Renderer
                     transformData.Add(node.Transform);
                 }
 
-                //instanceData.TintAlpha = node.TintAlpha;
-                //instanceData.EnvMapCount = node.EnvMapCount;
-                // TODO: numbones
+                var instanceTint = node switch
+                {
+                    SceneAggregate.Fragment fragment => fragment.Tint,
+                    ModelSceneNode model => model.Tint,
+                    _ => Vector4.One,
+                };
+
+                instanceData.TintAlpha = new Color32(instanceTint.X, instanceTint.Y, instanceTint.Z, instanceTint.W);
                 instanceData.LightProbeBinding = LightingInfo.LightProbes.IndexOf(node.LightProbeBinding);
             }
 

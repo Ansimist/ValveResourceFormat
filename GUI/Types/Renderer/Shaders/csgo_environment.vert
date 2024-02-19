@@ -44,7 +44,7 @@ out vec3 vBitangentOut;
 centroid out vec3 vCentroidNormalOut;
 out vec4 vTexCoord;
 out vec4 vTexCoord2;
-out vec4 vTintColor_ModelAmount;
+flat out vec4 vTintColor_ModelAmount;
 centroid out vec4 vVertexColor_Alpha;
 flat out uvec2 nEnvMap_LpvIndex;
 
@@ -54,7 +54,6 @@ uniform float g_flModelTintAmount = 1.0;
 #include "common/instancing.glsl"
 #include "common/ViewConstants.glsl"
 #include "common/LightingConstants.glsl"
-uniform vec4 vTint;
 
 // Material 1
 uniform float g_flTexCoordRotation1 = 0.0;
@@ -92,7 +91,9 @@ uniform vec4 g_vTexCoordScale1 = vec4(1.0);
 
 void main()
 {
-    mat4 skinTransform = CalculateObjectToWorldMatrix();
+    InstanceData_t instance = DecodePackedInstanceData(GetInstanceData());
+
+    mat4 skinTransform = CalculateObjectToWorldMatrix(instance.nTransformBufferOffset);
 
     #if defined(csgo_environment_vfx)
         skinTransform *= getSkinMatrix();
@@ -126,7 +127,7 @@ void main()
     #endif
 
     // original code has SrgbGammaToLinear
-    vTintColor_ModelAmount.rgb = (vTint.rgb);
+    vTintColor_ModelAmount.rgb = (instance.vTint.rgb);
     float flLowestPoint = min(vTintColor_ModelAmount.r, min(vTintColor_ModelAmount.g, vTintColor_ModelAmount.b));
     vTintColor_ModelAmount.a = g_flModelTintAmount * (1.0 - flLowestPoint);
 
@@ -138,7 +139,7 @@ void main()
         vVertexPaint =  mix(vec3(1.0), vCOLOR.rgb, vec3(vCOLOR.a));
     }
 
-    vVertexColor_Alpha = vec4(SrgbGammaToLinear(g_vColorTint.rgb) * vVertexPaint, vTint.a);
+    vVertexColor_Alpha = vec4(SrgbGammaToLinear(g_vColorTint.rgb) * vVertexPaint, instance.vTint.a);
 
     #if (F_SECONDARY_UV == 1)
         vTexCoord2.zw = vTEXCOORD1.xy;

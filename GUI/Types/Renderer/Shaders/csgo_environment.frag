@@ -30,7 +30,7 @@ in vec3 vTangentOut;
 in vec3 vBitangentOut;
 in vec4 vTexCoord;
 in vec4 vTexCoord2;
-in vec4 vTintColor_ModelAmount;
+flat in vec4 vTintColor_ModelAmount;
 centroid in vec4 vVertexColor_Alpha;
 in vec4 vBlendColorTint;
 

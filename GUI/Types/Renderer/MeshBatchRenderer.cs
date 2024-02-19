@@ -74,16 +74,14 @@ namespace GUI.Types.Renderer
 
         private ref struct Uniforms
         {
+            public bool UseLightProbeLighting;
             public int Animated = -1;
             public int AnimationTexture = -1;
             public int EnvmapTexture = -1;
-            public bool UseLightProbeLighting;
             public int LPVIrradianceTexture = -1;
             public int LPVIndicesTexture = -1;
             public int LPVScalarsTexture = -1;
             public int LPVShadowsTexture = -1;
-            public int Transform = -1;
-            public int Tint = -1;
             public int ObjectId = -1;
             public int MeshId = -1;
             public int ShaderId = -1;
@@ -154,8 +152,6 @@ namespace GUI.Types.Renderer
                         {
                             Animated = shader.GetUniformLocation("bAnimated"),
                             AnimationTexture = shader.GetUniformLocation("animationTexture"),
-                            Transform = shader.GetUniformLocation("transform"),
-                            Tint = shader.GetUniformLocation("vTint"),
                         };
 
                         if (shader.Parameters.ContainsKey("SCENE_CUBEMAP_TYPE"))
@@ -215,9 +211,6 @@ namespace GUI.Types.Renderer
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void Draw(Shader shader, ref Uniforms uniforms, ref Config config, Request request)
         {
-            var transformTk = request.Transform.ToOpenTK();
-            GL.ProgramUniformMatrix4(shader.Program, uniforms.Transform, false, ref transformTk);
-
             if (uniforms.ObjectId != -1)
             {
                 GL.ProgramUniform1((uint)shader.Program, uniforms.ObjectId, request.Node.Id);
@@ -269,14 +262,6 @@ namespace GUI.Types.Renderer
                 }
 
                 GL.ProgramUniform1(shader.Program, uniforms.MorphVertexIdOffset, morphComposite != null ? request.Call.VertexIdOffset : -1);
-            }
-
-            if (uniforms.Tint > -1)
-            {
-                var instanceTint = (request.Node is SceneAggregate.Fragment fragment) ? fragment.Tint : Vector4.One;
-                var tint = request.Mesh.Tint * request.Call.TintColor * instanceTint;
-
-                GL.ProgramUniform4(shader.Program, uniforms.Tint, tint.X, tint.Y, tint.Z, tint.W);
             }
 
             GL.VertexAttrib1(/*uniforms.ObjectId*/ 5, BitConverter.UInt32BitsToSingle(request.Node.Id));

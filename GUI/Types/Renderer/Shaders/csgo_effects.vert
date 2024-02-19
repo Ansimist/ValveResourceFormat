@@ -12,6 +12,7 @@ out vec3 vNormalOut;
 out vec3 vTangentOut;
 out vec3 vBitangentOut;
 out vec2 vTexCoordOut;
+flat out vec4 vTint;
 out vec4 vColorOut;
 
 #include "common/instancing.glsl"
@@ -19,7 +20,9 @@ out vec4 vColorOut;
 
 void main()
 {
-    mat4 skinTransform = CalculateObjectToWorldMatrix() * getSkinMatrix();
+    InstanceData_t instance = DecodePackedInstanceData(GetInstanceData());
+
+    mat4 skinTransform = CalculateObjectToWorldMatrix(instance.nTransformBufferOffset) * getSkinMatrix();
     vec4 fragPosition = skinTransform * vec4(vPOSITION, 1.0);
     gl_Position = g_matViewToProjection * fragPosition;
     vFragPosition = fragPosition.xyz / fragPosition.w;
@@ -34,5 +37,6 @@ void main()
     vBitangentOut = tangent.w * cross(vNormalOut, vTangentOut);
 
     vTexCoordOut = vTEXCOORD;
+    vTint = instance.vTint;
     vColorOut = vCOLOR;
 }

@@ -12,6 +12,7 @@ in vec3 vNormalOut;
 in vec3 vTangentOut;
 in vec3 vBitangentOut;
 in vec2 vTexCoordOut;
+flat in vec4 vTint;
 in vec4 vColorOut;
 
 out vec4 outputColor;
@@ -46,8 +47,6 @@ uniform float g_flFresnelFalloff = 1.0;
 uniform float g_flFresnelMax = 1.0;
 uniform float g_flFresnelMin;
 uniform float g_flOpacityScale = 1.0;
-
-uniform vec4 vTint;
 
 #include "common/fog.glsl"
 

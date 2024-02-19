@@ -18,7 +18,9 @@ out vec4 vColorBlendValues;
 
 void main()
 {
-    vec4 fragPosition = CalculateObjectToWorldMatrix() * vec4(vPOSITION, 1.0);
+    InstanceData_t instance = DecodePackedInstanceData(GetInstanceData());
+
+    vec4 fragPosition = CalculateObjectToWorldMatrix(instance.nTransformBufferOffset) * vec4(vPOSITION, 1.0);
     gl_Position = g_matViewToProjection * fragPosition;
     vFragPosition = fragPosition.xyz / fragPosition.w;
 

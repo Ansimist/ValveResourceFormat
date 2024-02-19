@@ -31,7 +31,6 @@ out vec2 vTexCoord3Out;
 
 #include "common/instancing.glsl"
 #include "common/ViewConstants.glsl"
-uniform vec4 vTint = vec4(1.0);
 
 uniform float g_flTexCoordScale0 = 1.0;
 uniform float g_flTexCoordScale1 = 1.0;
@@ -76,7 +75,9 @@ vec2 getTexCoord(float scale, float rotation, vec4 offset, vec4 scroll) {
 
 void main()
 {
-    mat4 skinTransform = CalculateObjectToWorldMatrix() * getSkinMatrix();
+    InstanceData_t instance = DecodePackedInstanceData(GetInstanceData());
+
+    mat4 skinTransform = CalculateObjectToWorldMatrix(instance.nTransformBufferOffset) * getSkinMatrix();
     vec4 fragPosition = skinTransform * vec4(vPOSITION, 1.0);
     gl_Position = g_matViewToProjection * fragPosition;
     vFragPosition = fragPosition.xyz / fragPosition.w;
@@ -105,6 +106,6 @@ void main()
     vBlendAlphas.xyz = vTEXCOORD2.xyz;//max(vTEXCOORD1.xyz * 0.5, 1e-6);
     vBlendAlphas.w = 0.0;
 
-    vVertexColor.rgb = SrgbGammaToLinear(vTint.rgb) * SrgbGammaToLinear(vTEXCOORD3.rgb);
-    vVertexColor.a = vTint.a;
+    vVertexColor.rgb = SrgbGammaToLinear(instance.vTint.rgb) * SrgbGammaToLinear(vTEXCOORD3.rgb);
+    vVertexColor.a = instance.vTint.a;
 }
