@@ -609,6 +609,12 @@ namespace GUI.Types.Renderer
                             lightProbe.DirectLightIndices.SetFiltering(TextureMinFilter.Nearest, TextureMagFilter.Nearest);
                         }
 
+                        scene.LightingInfo.LightProbeType = entity.Properties.ContainsKey(StringToken.Get("light_probe_atlas_x")) switch
+                        {
+                            false => Scene.LightProbeType.IndividualProbes,
+                            true => Scene.LightProbeType.ProbeAtlas,
+                        };
+
                         if (dlsdName != null)
                         {
                             lightProbe.DirectLightShadows = guiContext.MaterialLoader.GetTexture(dlsdName);
@@ -912,9 +918,6 @@ namespace GUI.Types.Renderer
             }
 
             SkyboxScene = new Scene(guiContext);
-
-            SkyboxScene.FogInfo.GradientFogActive = scene.FogInfo.GradientFogActive;
-            SkyboxScene.FogInfo.CubeFogActive = scene.FogInfo.CubeFogActive;
 
             var skyboxResult = new WorldLoader((World)skyboxWorld.DataBlock, SkyboxScene);
 

@@ -463,7 +463,7 @@ namespace GUI.Types.Renderer
                     continue;
                 }
 
-                if (LightingInfo.LightProbeType == LightProbeType.IndividualProbesIrradianceOnly && precomputedHandshake <= ProbeList.Count)
+                if (LightingInfo.LightmapGameVersionNumber == 0 && precomputedHandshake <= ProbeList.Count)
                 {
                     // SteamVR Home node handshake as probe index
                     node.LightProbeBinding = ProbeList[precomputedHandshake - 1];

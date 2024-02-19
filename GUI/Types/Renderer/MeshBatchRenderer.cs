@@ -77,7 +77,7 @@ namespace GUI.Types.Renderer
             public int Animated = -1;
             public int AnimationTexture = -1;
             public int EnvmapTexture = -1;
-            public int LightProbeVolumeData = -1;
+            public bool UseLightProbeLighting;
             public int LPVIrradianceTexture = -1;
             public int LPVIndicesTexture = -1;
             public int LPVScalarsTexture = -1;
@@ -98,6 +98,7 @@ namespace GUI.Types.Renderer
         private ref struct Config
         {
             public bool NeedsCubemapBinding;
+            public int LightmapGameVersionNumber;
             public Scene.LightProbeType LightProbeType;
         }
 
@@ -127,6 +128,7 @@ namespace GUI.Types.Renderer
             Config config = new()
             {
                 NeedsCubemapBinding = context.Scene.LightingInfo.CubemapType == Scene.CubemapType.IndividualCubemaps,
+                LightmapGameVersionNumber = context.Scene.LightingInfo.LightmapGameVersionNumber,
                 LightProbeType = context.Scene.LightingInfo.LightProbeType,
             };
 
@@ -170,7 +172,7 @@ namespace GUI.Types.Renderer
 
                         if (shader.Parameters.ContainsKey("D_BAKED_LIGHTING_FROM_PROBE"))
                         {
-                            uniforms.LightProbeVolumeData = shader.GetUniformBlockIndex("LightProbeVolume");
+                            uniforms.UseLightProbeLighting = true;
                             uniforms.LPVIrradianceTexture = shader.GetUniformLocation("g_tLPV_Irradiance");
                             uniforms.LPVIndicesTexture = shader.GetUniformLocation("g_tLPV_Indices");
                             uniforms.LPVScalarsTexture = shader.GetUniformLocation("g_tLPV_Scalars");
@@ -230,15 +232,19 @@ namespace GUI.Types.Renderer
                 SetInstanceTexture(shader, ReservedTextureSlots.EnvironmentMap, uniforms.EnvmapTexture, envmap);
             }
 
-            if (config.LightProbeType < Scene.LightProbeType.ProbeAtlas && uniforms.LightProbeVolumeData != -1 && request.Node.LightProbeBinding != null)
+            if (config.LightProbeType != Scene.LightProbeType.ProbeAtlas && uniforms.UseLightProbeLighting
+                && request.Node.LightProbeBinding is { } lightProbe)
             {
-                var lightProbe = request.Node.LightProbeBinding;
                 SetInstanceTexture(shader, ReservedTextureSlots.Probe1, uniforms.LPVIrradianceTexture, lightProbe.Irradiance);
 
-                if (config.LightProbeType > Scene.LightProbeType.IndividualProbesIrradianceOnly)
+                if (config.LightmapGameVersionNumber == 1)
                 {
                     SetInstanceTexture(shader, ReservedTextureSlots.Probe2, uniforms.LPVIndicesTexture, lightProbe.DirectLightIndices);
                     SetInstanceTexture(shader, ReservedTextureSlots.Probe3, uniforms.LPVScalarsTexture, lightProbe.DirectLightScalars);
+                }
+                else if (request.Node.Scene.LightingInfo.LightmapGameVersionNumber == 2)
+                {
+                    SetInstanceTexture(shader, ReservedTextureSlots.Probe2, uniforms.LPVShadowsTexture, lightProbe.DirectLightShadows);
                 }
             }
 
