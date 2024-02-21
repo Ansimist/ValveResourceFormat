@@ -7,7 +7,7 @@ namespace GUI.Types.ParticleRenderer.Renderers
 {
     internal class RenderSprites : ParticleFunctionRenderer
     {
-        private const string ShaderName = "vrf.particle.sprite";
+        private const string ShaderName = "vrf.spritecard";
         private const int VertexSize = 9;
 
         private Shader shader;
