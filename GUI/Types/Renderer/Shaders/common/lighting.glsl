@@ -154,12 +154,6 @@ vec3 GetEnvLightDirection(uint nLightIndex)
 
 vec3 GetLightPositionWs(uint nLightIndex)
 {
-    // directional light
-    if (g_vLightPosition_Type[nLightIndex].a == 0.0)
-    {
-        //return GetEnvLightDirection(nLightIndex);
-    }
-
     return g_vLightPosition_Type[nLightIndex].xyz;
 }
 
@@ -172,6 +166,7 @@ vec3 GetLightDirection(vec3 vPositionWs, uint nLightIndex)
 {
     if (IsLightDirectional(nLightIndex))
     {
+        //return g_vLightDirection_InvRange[nLightIndex].zyx;
         return GetEnvLightDirection(nLightIndex);
     }
 
@@ -354,27 +349,36 @@ void CalculateDirectLightingNew(inout LightingTerms_t lighting, inout MaterialPr
         dlsh = textureLod(g_tLPV_Shadows, vLightProbeShadowCoords, 0.0);
     #endif
 
-    const uint StaticLightCount = 4;
-    for(uint uLightIndex = 0; uLightIndex < StaticLightCount; ++uLightIndex)
+    const uint BakedShadowCount = 4;
+    for(uint uShadowIndex = 0; uShadowIndex < BakedShadowCount; ++uShadowIndex)
     {
-        float visibility = 1.0 - dlsh[uLightIndex];
+        float visibility = 1.0 - dlsh[uShadowIndex];
         if (visibility > 0.0001)
         {
-            vec3 lightVector = GetLightDirection(mat.PositionWS, uLightIndex);
+            uint nLightIndexStart = uShadowIndex == 0 ? uShadowIndex : g_nNumLights[uShadowIndex - 1];
+            uint nLightCount = g_nNumLights[uShadowIndex];
 
-            if (IsLightDirectional(uLightIndex))
+            for(uint uLightIndex = nLightIndexStart; uLightIndex < nLightCount; ++uLightIndex)
             {
-                visibility *= CalculateSunShadowMapVisibility(mat.PositionWS, lightVector);
-            }
-            else
-            {
-                float flInvRange = GetLightRangeInverse(uLightIndex) * 0.5;
-                float flDistance = length(GetLightPositionWs(uLightIndex) - mat.PositionWS);
-                float flFallOff = 0.12;
-                visibility *= attenuate_cusp(flDistance * flInvRange, flFallOff);
-            }
+                vec3 lightVector = GetLightDirection(mat.PositionWS, uLightIndex);
 
-            CalculateShading(lighting, lightVector, visibility * GetLightColor(0), mat);
+                if (IsLightDirectional(uLightIndex))
+                {
+                    visibility *= CalculateSunShadowMapVisibility(mat.PositionWS, lightVector);
+                }
+                else
+                {
+                    highp float flInvRange = GetLightRangeInverse(uLightIndex) * 0.5;
+                    float flDistance = length(GetLightPositionWs(uLightIndex) - mat.PositionWS);
+                    float flFallOff = g_vLightFallOff[uLightIndex].x;
+                    visibility *= attenuate_cusp(flDistance * flInvRange, flFallOff);
+                }
+
+                if (visibility > 0.0001)
+                {
+                    CalculateShading(lighting, lightVector, visibility * GetLightColor(uLightIndex), mat);
+                }
+            }
         }
     }
 }

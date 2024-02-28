@@ -5,7 +5,7 @@
 
 layout(std140, binding = 1) uniform LightingConstants {
     vec4 g_vLightmapUvScale;
-    vec4 g_nNumLights;
+    uvec4 g_nNumLights;
     vec4[MAX_LIGHTS] g_vLightPosition_Type;
     vec4[MAX_LIGHTS] g_vLightDirection_InvRange;
     mat4[MAX_LIGHTS] g_matLightToWorld;

@@ -93,6 +93,8 @@ class SceneLight(Scene scene) : SceneNode(scene)
             MathF.Sin(angles.X)
         );
 
+        light.Direction = Vector3.Normalize(light.Direction);
+
         return light;
     }
 

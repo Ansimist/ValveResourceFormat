@@ -8,21 +8,6 @@ namespace GUI.Types.Renderer
         public TextureTarget Target { get; }
         public int Handle { get; }
 
-        public int Sampler { get; private set; } = -1;
-        public void SetSamplerState(SamplerParameterName samplerParameterName, int value)
-        {
-            Sampler = -1;
-            return;
-            /*
-            if (Sampler == -1)
-            {
-                Sampler = GL.GenSampler();
-            }
-
-            GL.SamplerParameter(Sampler, samplerParameterName, value);
-   */
-        }
-
         public Texture.SpritesheetData SpriteSheetData { get; }
 
         public int Width { get; }
