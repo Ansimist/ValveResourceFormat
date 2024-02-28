@@ -1,5 +1,3 @@
-using System;
-using System.Numerics;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Utils;
 
@@ -54,7 +52,7 @@ class SceneLight(Scene scene) : SceneNode(scene)
     {
         var light = new SceneLight(scene)
         {
-            StationaryLightIndex = Convert.ToInt32(entity.GetProperty("bakedshadowindex")?.Data ?? -1),
+            StationaryLightIndex = entity.GetPropertyUnchecked("bakedshadowindex", -1),
             Entity = type,
             Type = type switch
             {
@@ -75,15 +73,20 @@ class SceneLight(Scene scene) : SceneNode(scene)
                 _ => throw new NotImplementedException()
             } / 255.0f,
 
-            Brightness = entity.GetProperty("brightness")?.Data switch
+            Brightness = type switch
             {
-                object nonFloat => Convert.ToSingle(nonFloat),
-                null => 1.0f
+                EntityType.Environment => entity.GetPropertyUnchecked("brightness", 1.0f),
+                _ => entity.GetPropertyUnchecked("brightness_legacy", 1.0f),
             },
 
-            Range = Convert.ToSingle(entity.GetProperty("range")?.Data ?? 512.0f),
-            FallOff = Convert.ToSingle(entity.GetProperty("skirt")?.Data ?? 0.1f),
+            Range = entity.GetPropertyUnchecked("range", 512.0f),
+            FallOff = entity.GetPropertyUnchecked("skirt", 0.1f),
         };
+
+        if (light.Brightness > 10f)
+        {
+            light.Brightness = 1f;
+        }
 
         var angles = EntityTransformHelper.GetPitchYawRoll(entity);
 

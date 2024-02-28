@@ -1,6 +1,6 @@
 #version 460
 
-#define MAX_LIGHTS 128
+#define MAX_LIGHTS 256
 #define MAX_ENVMAPS 144
 
 layout(std140, binding = 1) uniform LightingConstants {

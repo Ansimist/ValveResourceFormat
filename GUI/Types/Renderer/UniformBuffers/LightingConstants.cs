@@ -5,7 +5,7 @@ namespace GUI.Types.Renderer.UniformBuffers
     [StructLayout(LayoutKind.Sequential)]
     public class LightingConstants
     {
-        public const int MAX_LIGHTS = 128;
+        public const int MAX_LIGHTS = 256;
         public const int MAX_ENVMAPS = 144;
 
         public Vector4 LightmapUvScale;
