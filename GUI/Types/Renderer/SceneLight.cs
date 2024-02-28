@@ -70,7 +70,8 @@ class SceneLight(Scene scene) : SceneNode(scene)
                 byte[] bytes => new Vector3(bytes[0], bytes[1], bytes[2]),
                 Vector3 vec => vec,
                 Vector4 vec4 => new Vector3(vec4.X, vec4.Y, vec4.Z),
-                _ => throw new NotImplementedException()
+                string str => EntityTransformHelper.ParseVector(str),
+                _ => throw new NotImplementedException("Unsupported color type" + entity.GetProperty("color").Data.GetType().Name),
             } / 255.0f,
 
             Brightness = type switch

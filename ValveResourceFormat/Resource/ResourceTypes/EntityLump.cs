@@ -39,7 +39,14 @@ namespace ValveResourceFormat.ResourceTypes
             {
                 if (Properties.TryGetValue(hash, out var property))
                 {
-                    return (T)Convert.ChangeType(property.Data, typeof(T), CultureInfo.InvariantCulture);
+                    try
+                    {
+                        return (T)Convert.ChangeType(property.Data, typeof(T), CultureInfo.InvariantCulture);
+                    }
+                    catch (FormatException)
+                    {
+                        // String format
+                    }
                 }
 
                 return defaultValue;

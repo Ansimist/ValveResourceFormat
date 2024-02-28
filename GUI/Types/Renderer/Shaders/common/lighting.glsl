@@ -201,30 +201,6 @@ Light GetLight(float flStrength, float flVisibility)
 
 #if (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
 
-    #if (LightmapGameVersionNumber == 1)
-
-        ivec4 GetLightmappedLightIndices()
-        {
-            vec4 vLightIndexFloats = texture(g_tDirectLightIndices, vLightmapUVScaled).rgba;
-
-            ivec4 vLightIndices = ivec4( vLightIndexFloats.xyzw * 255 );
-            return vLightIndices;
-        }
-
-        vec4 GetLightmappedLightStrengths()
-        {
-            return texture(g_tDirectLightStrengths, vLightmapUVScaled).rgba;
-        }
-
-    #elif (LightmapGameVersionNumber == 2)
-
-        vec4 GetLightmappedLightShadow()
-        {
-            return texture(g_tDirectLightShadows, vLightmapUVScaled).rgba;
-        }
-
-    #endif
-
     Light GetLightmappedLight(vec3 vPositionWs, uint nLocalIndex)
     {
         Light light = GetLight(1.0, 0.0);
@@ -234,14 +210,14 @@ Light GetLight(float flStrength, float flVisibility)
         float flVisibility = 1.0;
 
         #if (LightmapGameVersionNumber == 1)
-            ivec4 vLightIndices = GetLightmappedLightIndices();
-            vec4 vLightStrengths = GetLightmappedLightStrengths();
+            ivec4 vLightIndices = ivec4(texture(g_tDirectLightIndices, vLightmapUVScaled).rgba * 255);
+            vec4 vLightStrengths = texture(g_tDirectLightStrengths, vLightmapUVScaled).rgba;
 
             flStrength = vLightStrengths[nLocalIndex];
             nGlobalIndex = uint(vLightIndices[nLocalIndex]);
 
         #elif (LightmapGameVersionNumber == 2)
-            vec4 vLightShadow = GetLightmappedLightShadow();
+            vec4 vLightShadow = texture(g_tDirectLightShadows, vLightmapUVScaled).rgba;
 
             flVisibility = 1.0 - vLightShadow[nLocalIndex];
 
@@ -336,14 +312,12 @@ float attenuate_cusp(float s, float falloff)
     return pow2(1 - s2) / (1 + falloff * s);
 }
 
-#define CalculateDirectLighting CalculateDirectLightingNew
-
-void CalculateDirectLightingNew(inout LightingTerms_t lighting, inout MaterialProperties_t mat)
+void CalculateDirectLighting(inout LightingTerms_t lighting, inout MaterialProperties_t mat)
 {
-    vec4 dlsh = vec4(1, 0, 0, 0);
+    vec4 dlsh = vec4(1, 1, 1, 1);
 
     #if (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
-        dlsh = texture(g_tDirectLightShadows, vLightmapUVScaled);
+        dlsh = textureLod(g_tDirectLightShadows, vLightmapUVScaled, 0.0);
     #elif (D_BAKED_LIGHTING_FROM_PROBE == 1)
         vec3 vLightProbeShadowCoords = CalculateProbeShadowCoords(mat.PositionWS);
         dlsh = textureLod(g_tLPV_Shadows, vLightProbeShadowCoords, 0.0);
@@ -352,14 +326,15 @@ void CalculateDirectLightingNew(inout LightingTerms_t lighting, inout MaterialPr
     const uint BakedShadowCount = 4;
     for(uint uShadowIndex = 0; uShadowIndex < BakedShadowCount; ++uShadowIndex)
     {
-        float visibility = 1.0 - dlsh[uShadowIndex];
-        if (visibility > 0.0001)
+        float shadowFactor = 1.0 - dlsh[uShadowIndex];
+        if (shadowFactor > 0.0001)
         {
-            uint nLightIndexStart = uShadowIndex == 0 ? uShadowIndex : g_nNumLights[uShadowIndex - 1];
+            uint nLightIndexStart = uShadowIndex == 0 ? 0 : g_nNumLights[uShadowIndex - 1];
             uint nLightCount = g_nNumLights[uShadowIndex];
 
             for(uint uLightIndex = nLightIndexStart; uLightIndex < nLightCount; ++uLightIndex)
             {
+                float visibility = shadowFactor;
                 vec3 lightVector = GetLightDirection(mat.PositionWS, uLightIndex);
 
                 if (IsLightDirectional(uLightIndex))
@@ -368,8 +343,9 @@ void CalculateDirectLightingNew(inout LightingTerms_t lighting, inout MaterialPr
                 }
                 else
                 {
-                    highp float flInvRange = GetLightRangeInverse(uLightIndex) * 0.5;
-                    float flDistance = length(GetLightPositionWs(uLightIndex) - mat.PositionWS);
+                    float flInvRange = GetLightRangeInverse(uLightIndex) / g_vLightPosition_Type[uLightIndex].a;
+                    vec3 vLightPosition = g_vLightPosition_Type[uLightIndex].xyz;
+                    float flDistance = length(vLightPosition - mat.PositionWS);
                     float flFallOff = g_vLightFallOff[uLightIndex].x;
                     visibility *= attenuate_cusp(flDistance * flInvRange, flFallOff);
                 }

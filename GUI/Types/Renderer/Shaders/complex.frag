@@ -663,7 +663,9 @@ void main()
 #endif
 
 #if renderMode_LightmapShadows == 1 && (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
-    outputColor = vec4(vec3(1.0) - texture(g_tDirectLightShadows, vLightmapUVScaled).ggg, 1.0);
+    vec4 dlsh = texture(g_tDirectLightShadows, vLightmapUVScaled);
+    //outputColor = vec4(vec3(1.0) - min(min(dlsh.x, min(dlsh.y, dlsh.z)), dlsh.a), 1.0);
+    outputColor = 1.0 - dlsh.gggg;
 #endif
 
 #if renderMode_Tint == 1
