@@ -166,6 +166,42 @@ partial class Scene
             SunLightFrustum.Update(SunViewProjection);
         }
 
+        public void StoreLightMappedLights_V1(List<SceneLight> lights)
+        {
+            var currentBakedLightIndex = 0u;
+
+            foreach (var light in lights.OrderBy(l => l.StationaryLightIndex).Where(l => l.StationaryLightIndex >= 0))
+            {
+                if (currentBakedLightIndex >= LightingConstants.MAX_LIGHTS)
+                {
+                    Log.Warn("Lightbinner", "Too many lights in scene. Some lights were removed.");
+                    break;
+                }
+
+                if (light.StationaryLightIndex < currentBakedLightIndex)
+                {
+                    Log.Warn("Lightbinner", "Ommited light with duplicate baked index.");
+                    continue;
+                }
+
+                LightingData.LightPosition_Type[currentBakedLightIndex] = new Vector4(light.Position, (int)light.Type);
+                LightingData.LightDirection_InvRange[currentBakedLightIndex] = new Vector4(light.Direction, 1.0f / light.Range);
+
+                //Matrix4x4.Invert(light.Transform, out var lightToWorld);
+                LightingData.LightToWorld[currentBakedLightIndex] = light.Transform;
+
+                // TODO: Linear color
+                LightingData.LightColor_Brightness[currentBakedLightIndex] = new Vector4(light.Color, light.Brightness);
+
+                LightingData.LightFallOff[currentBakedLightIndex] = new Vector4(light.FallOff, light.Range, 0.0f, 0.0f);
+
+                currentBakedLightIndex++;
+            }
+
+            // Storing simple light count 0..255 so that dynamic lights can start from this index (if there's space!!)
+            LightingData.NumLightsBakedShadowIndex[0] = currentBakedLightIndex;
+        }
+
         public void StoreLightMappedLights_V2(List<SceneLight> lights)
         {
             var currentShadowIndex = 0;
@@ -190,7 +226,7 @@ partial class Scene
                     currentShadowIndex = light.StationaryLightIndex;
                 }
 
-                LightingData.LightPosition_Type[totalCount] = new Vector4(light.Transform.Translation, (int)light.Type);
+                LightingData.LightPosition_Type[totalCount] = new Vector4(light.Position, (int)light.Type);
                 LightingData.LightDirection_InvRange[totalCount] = new Vector4(light.Direction, 1.0f / light.Range);
 
                 //Matrix4x4.Invert(light.Transform, out var lightToWorld);
@@ -199,7 +235,7 @@ partial class Scene
                 // TODO: Linear color
                 LightingData.LightColor_Brightness[totalCount] = new Vector4(light.Color, light.Brightness);
 
-                LightingData.LightFallOff[totalCount] = new Vector4(light.FallOff, 0.0f, 0.0f, 0.0f);
+                LightingData.LightFallOff[totalCount] = new Vector4(light.FallOff, light.Range, 0.0f, 0.0f);
 
                 totalCount++;
             }

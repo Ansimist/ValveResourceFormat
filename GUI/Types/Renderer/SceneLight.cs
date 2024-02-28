@@ -28,6 +28,7 @@ class SceneLight(Scene scene) : SceneNode(scene)
         Rect,
     }
 
+    public Vector3 Position { get; set; }
     public Vector3 Color { get; set; } = Vector3.One;
     public float Brightness { get; set; } = 1.0f;
     public float FallOff { get; set; } = 1.0f;
@@ -52,7 +53,7 @@ class SceneLight(Scene scene) : SceneNode(scene)
     {
         var light = new SceneLight(scene)
         {
-            StationaryLightIndex = entity.GetPropertyUnchecked("bakedshadowindex", -1),
+            StationaryLightIndex = entity.GetPropertyUnchecked("bakedshadowindex", entity.GetPropertyUnchecked("bakelightindex", -1)),
             Entity = type,
             Type = type switch
             {
@@ -91,6 +92,7 @@ class SceneLight(Scene scene) : SceneNode(scene)
 
         var angles = EntityTransformHelper.GetPitchYawRoll(entity);
 
+        light.Position = EntityTransformHelper.ParseVector(entity.GetProperty<string>("origin"));
         light.Direction = new Vector3(
             MathF.Cos(angles.Y) * MathF.Cos(angles.X),
             MathF.Sin(angles.Y) * MathF.Cos(angles.X),

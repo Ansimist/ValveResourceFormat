@@ -314,61 +314,6 @@ float attenuate_cusp(float s, float falloff)
 
 void CalculateDirectLighting(inout LightingTerms_t lighting, inout MaterialProperties_t mat)
 {
-    vec4 dlsh = vec4(1, 1, 1, 1);
-
-    #if (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
-        dlsh = textureLod(g_tDirectLightShadows, vLightmapUVScaled, 0.0);
-    #elif (D_BAKED_LIGHTING_FROM_PROBE == 1)
-        vec3 vLightProbeShadowCoords = CalculateProbeShadowCoords(mat.PositionWS);
-        dlsh = textureLod(g_tLPV_Shadows, vLightProbeShadowCoords, 0.0);
-    #endif
-
-    const uint BakedShadowCount = 4;
-    for(uint uShadowIndex = 0; uShadowIndex < BakedShadowCount; ++uShadowIndex)
-    {
-        float shadowFactor = 1.0 - dlsh[uShadowIndex];
-        if (shadowFactor > 0.0001)
-        {
-            uint nLightIndexStart = uShadowIndex == 0 ? 0 : g_nNumLights[uShadowIndex - 1];
-            uint nLightCount = g_nNumLights[uShadowIndex];
-
-            for(uint uLightIndex = nLightIndexStart; uLightIndex < nLightCount; ++uLightIndex)
-            {
-                float visibility = shadowFactor;
-                vec3 lightVector = GetLightDirection(mat.PositionWS, uLightIndex);
-
-                if (IsLightDirectional(uLightIndex))
-                {
-                    visibility *= CalculateSunShadowMapVisibility(mat.PositionWS, lightVector);
-                }
-                else
-                {
-                    float flInvRange = GetLightRangeInverse(uLightIndex) / g_vLightPosition_Type[uLightIndex].a;
-                    vec3 vLightPosition = g_vLightPosition_Type[uLightIndex].xyz;
-                    float flDistance = length(vLightPosition - mat.PositionWS);
-                    float flFallOff = g_vLightFallOff[uLightIndex].x;
-                    visibility *= attenuate_cusp(flDistance * flInvRange, flFallOff);
-                }
-
-                if (visibility > 0.0001)
-                {
-                    CalculateShading(lighting, lightVector, visibility * GetLightColor(uLightIndex), mat);
-                }
-            }
-        }
-    }
-}
-
-// This should contain our direct lighting loop
-void CalculateDirectLightingOld(inout LightingTerms_t lighting, inout MaterialProperties_t mat)
-{
-    vec3 lightVector = GetEnvLightDirection(0);
-    //const uint StaticLightCount = 4;
-    //for(uint uLightIndex = 0; uLightIndex < StaticLightCount; ++uLightIndex)
-
-    vec3 vPositionWs = mat.PositionWS;
-    float visibility = 1.0;
-
     #if (LightmapGameVersionNumber == 1)
         #if (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
             vec4 dls = texture(g_tDirectLightStrengths, vLightmapUVScaled);
@@ -377,7 +322,7 @@ void CalculateDirectLightingOld(inout LightingTerms_t lighting, inout MaterialPr
             vec3 vLightProbeShadowCoords = CalculateProbeShadowCoords(mat.PositionWS);
             vec4 dls = textureLod(g_tLPV_Scalars, vLightProbeShadowCoords, 0.0);
             //vec4 dli = textureLod(g_tLPV_Indices, vLightProbeShadowCoords, 0.0);
-            vec4 dli = vec4(0.12, 0.34, 0.56, 0); // Indices aren't working right now, just assume sun is in alpha.
+            vec4 dli = vec4(0.999, 0.999, 0.999, 0); // Indices aren't working right now, just assume sun is in alpha.
         #else
             vec4 dls = vec4(1, 0, 0, 0);
             vec4 dli = vec4(0, 0, 0, 0);
@@ -387,39 +332,76 @@ void CalculateDirectLightingOld(inout LightingTerms_t lighting, inout MaterialPr
         //return;
 
         vec4 vLightStrengths = pow2(dls);
-        ivec4 vLightIndices = ivec4(dli * 255.0);
-        visibility = 0.0;
+        uvec4 vLightIndices = uvec4(dli * 255.0);
 
-        int index = 0;
         for (int i = 0; i < 4; i++)
         {
-            if (vLightIndices[i] != index)
-                continue;
+            uint uLightIndex = vLightIndices[i];
+            float visibility = vLightStrengths[i];
 
-            visibility = vLightStrengths[i];
-            break;
+            vec3 lightVector = GetLightDirection(mat.PositionWS, uLightIndex);
+
+            if (visibility > 0.0001)
+            {
+                CalculateShading(lighting, lightVector, visibility * GetLightColor(uLightIndex), mat);
+            }
         }
 
+
     #elif (LightmapGameVersionNumber == 2)
+        vec4 dlsh = vec4(1, 1, 1, 1);
+
         #if (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
-            vec4 dlsh = texture(g_tDirectLightShadows, vLightmapUVScaled);
+            dlsh = textureLod(g_tDirectLightShadows, vLightmapUVScaled, 0.0);
         #elif (D_BAKED_LIGHTING_FROM_PROBE == 1)
             vec3 vLightProbeShadowCoords = CalculateProbeShadowCoords(mat.PositionWS);
-            vec4 dlsh = textureLod(g_tLPV_Shadows, vLightProbeShadowCoords, 0.0);
-        #else
-            vec4 dlsh = vec4(1, 0, 0, 0);
+            dlsh = textureLod(g_tLPV_Shadows, vLightProbeShadowCoords, 0.0);
         #endif
 
-        int index = 0;
-        visibility = 1.0 - dlsh[index];
+        const uint BakedShadowCount = 4;
+        for(uint uShadowIndex = 0; uShadowIndex < BakedShadowCount; ++uShadowIndex)
+        {
+            float shadowFactor = 1.0 - dlsh[uShadowIndex];
+            if (shadowFactor > 0.0001)
+            {
+                uint nLightIndexStart = uShadowIndex == 0 ? 0 : g_nNumLights[uShadowIndex - 1];
+                uint nLightCount = g_nNumLights[uShadowIndex];
+
+                for(uint uLightIndex = nLightIndexStart; uLightIndex < nLightCount; ++uLightIndex)
+                {
+                    float visibility = shadowFactor;
+                    vec3 lightVector = GetLightDirection(mat.PositionWS, uLightIndex);
+
+                    //if (uLightIndex == 8 && length(GetLightPositionWs(uLightIndex) - mat.PositionWS) < g_vLightFallOff[uLightIndex].y)
+                    //{
+                    //    visibility = 1.0;
+                    //}
+
+                    if (g_vLightPosition_Type[uLightIndex].a == 0.0)
+                    {
+                        visibility *= CalculateSunShadowMapVisibility(mat.PositionWS, lightVector);
+                    }
+                    else
+                    {
+                        float flInvRange = GetLightRangeInverse(uLightIndex) / g_vLightPosition_Type[uLightIndex].a;
+                        vec3 vLightPosition = g_vLightPosition_Type[uLightIndex].xyz;
+                        float flDistance = length(vLightPosition - mat.PositionWS);
+                        float flFallOff = g_vLightFallOff[uLightIndex].x;
+                        float flRange = g_vLightFallOff[uLightIndex].y * 2;
+
+                        //float s = flDistance / flRange;
+
+                        visibility *= attenuate_cusp(flDistance * flInvRange, flFallOff);
+                    }
+
+                    if (visibility > 0.0001)
+                    {
+                        CalculateShading(lighting, lightVector, visibility * GetLightColor(uLightIndex), mat);
+                    }
+                }
+            }
+        }
     #endif
-
-    if (visibility > 0.0001)
-    {
-        visibility *= CalculateSunShadowMapVisibility(mat.PositionWS, lightVector);
-
-        CalculateShading(lighting, lightVector, visibility * GetLightColor(0), mat);
-    }
 }
 
 

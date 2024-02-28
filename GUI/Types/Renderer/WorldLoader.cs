@@ -63,7 +63,14 @@ namespace GUI.Types.Renderer
                 LoadEntitiesFromLump(entityLump, "world_layer_base", Matrix4x4.Identity); // TODO: Hardcoded layer name
             }
 
-            scene.LightingInfo.StoreLightMappedLights_V2(
+            Action<List<SceneLight>> lightObjectStore = scene.LightingInfo.LightmapGameVersionNumber switch
+            {
+                1 => scene.LightingInfo.StoreLightMappedLights_V1,
+                2 => scene.LightingInfo.StoreLightMappedLights_V2,
+                _ => throw new NotImplementedException($"Lightmap version {scene.LightingInfo.LightmapGameVersionNumber} is not supported."),
+            };
+
+            lightObjectStore.Invoke(
                 scene.AllNodes.Where(n => n is SceneLight).Cast<SceneLight>().ToList()
             );
 
