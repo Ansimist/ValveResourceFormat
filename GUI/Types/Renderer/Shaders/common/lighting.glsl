@@ -96,18 +96,37 @@ float CalculateSunShadowMapVisibility(vec3 vPosition, vec3 direction)
     // To skip PCF
     // return 1 - textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords, currentDepth), 0).r;
 
-    float shadow = 0.0;
+    // Taken from The Lab renderer :: ComputeShadow_PCF_3x3_Gaussian
+
+    // Filter weights: 20 33 20
+    //                 33 55 33
+    //                 20 33 20
+    const vec4 weights = vec4(0.3, 0.5, 0.2, 0);
+
     vec2 texelSize = 1.0 / textureSize(g_tShadowDepthBufferDepth, 0);
-    for(int x = -1; x <= 1; ++x)
+
+    vec4 v20Taps;
+    v20Taps.x = textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords + vec2( 1,  1) * texelSize, currentDepth), 0).r;
+    v20Taps.y = textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords + vec2(-1,  1) * texelSize, currentDepth), 0).r;
+    v20Taps.z = textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords + vec2( 1, -1) * texelSize, currentDepth), 0).r;
+    v20Taps.w = textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords + vec2(-1, -1) * texelSize, currentDepth), 0).r;
+
+    float shadow = dot(v20Taps.xyzw, vec4(0.25));
+
+    if (shadow > 0.0 && shadow < 1.0)
     {
-        for(int y = -1; y <= 1; ++y)
-        {
-            float pcfDepth = textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords + vec2(x, y) * texelSize, currentDepth), 0).r;
-            shadow += pcfDepth;
-        }
+        shadow *= weights.x * 4.0;
+
+        vec4 v33Taps;
+        v33Taps.x = textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords + vec2( 1,  0) * texelSize, currentDepth), 0).r;
+        v33Taps.y = textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords + vec2(-1,  0) * texelSize, currentDepth), 0).r;
+        v33Taps.z = textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords + vec2( 0,  1) * texelSize, currentDepth), 0).r;
+        v33Taps.w = textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords + vec2( 0, -1) * texelSize, currentDepth), 0).r;
+        shadow += dot(v33Taps.xyzw, weights.yyyy);
+
+        shadow += textureLod(g_tShadowDepthBufferDepth, vec3(shadowCoords, currentDepth), 0).r * weights.z;
     }
 
-    shadow /= 9.0;
     return 1 - shadow;
 }
 
