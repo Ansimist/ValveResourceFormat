@@ -32,6 +32,10 @@ class SceneLight(Scene scene) : SceneNode(scene)
     public Vector3 Color { get; set; } = Vector3.One;
     public float Brightness { get; set; } = 1.0f;
     public float FallOff { get; set; } = 1.0f;
+    public float SpotInnerAngle { get; set; }
+    public float SpotOuterAngle { get; set; } = 45.0f;
+    public float AttenuationLinear { get; set; }
+    public float AttenuationQuadratic { get; set; }
     public LightType Type { get; set; }
     public EntityType Entity { get; set; }
 
@@ -77,7 +81,7 @@ class SceneLight(Scene scene) : SceneNode(scene)
 
             Brightness = type switch
             {
-                EntityType.Environment => entity.GetPropertyUnchecked("brightness", 1.0f),
+                EntityType.Environment or EntityType.Omni or EntityType.Spot => entity.GetPropertyUnchecked("brightness", 1.0f),
                 _ => entity.GetPropertyUnchecked("brightness_legacy", 1.0f),
             },
 
@@ -85,9 +89,23 @@ class SceneLight(Scene scene) : SceneNode(scene)
             FallOff = entity.GetPropertyUnchecked("skirt", 0.1f),
         };
 
-        if (light.Brightness > 10f)
+        var isNewLightType = type is EntityType.Omni2 or EntityType.Barn or EntityType.Rect;
+
+        if (isNewLightType && light.Brightness > 15f)
         {
             light.Brightness = 1f;
+        }
+
+        if (!isNewLightType)
+        {
+            light.AttenuationLinear = entity.GetPropertyUnchecked("attenuation1", 0.0f);
+            light.AttenuationQuadratic = entity.GetPropertyUnchecked("attenuation2", 0.0f);
+        }
+
+        if (type is EntityType.Spot)
+        {
+            light.SpotInnerAngle = entity.GetPropertyUnchecked("innerconeangle", light.SpotInnerAngle);
+            light.SpotOuterAngle = entity.GetPropertyUnchecked("outerconeangle", light.SpotOuterAngle);
         }
 
         var angles = EntityTransformHelper.GetPitchYawRoll(entity);

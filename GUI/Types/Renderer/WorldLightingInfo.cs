@@ -168,38 +168,45 @@ partial class Scene
 
         public void StoreLightMappedLights_V1(List<SceneLight> lights)
         {
-            var currentBakedLightIndex = 0u;
+            var currentLightIndex = 0u;
+            var storedBakedLights = false;
 
-            foreach (var light in lights.OrderBy(l => l.StationaryLightIndex).Where(l => l.StationaryLightIndex >= 0))
+            foreach (var light in lights.OrderBy(l => l.StationaryLightIndex).Where(l => l.StationaryLightIndex >= 0)
+                .Concat(lights.Where(l => l.StationaryLightIndex == -1)))
             {
-                if (currentBakedLightIndex >= LightingConstants.MAX_LIGHTS)
+                if (currentLightIndex >= LightingConstants.MAX_LIGHTS)
                 {
                     Log.Warn("Lightbinner", "Too many lights in scene. Some lights were removed.");
                     break;
                 }
 
-                if (light.StationaryLightIndex < currentBakedLightIndex)
+                if (!storedBakedLights && light.StationaryLightIndex == -1)
                 {
-                    Log.Warn("Lightbinner", "Ommited light with duplicate baked index.");
+                    storedBakedLights = true;
+                    LightingData.NumLights[0] = currentLightIndex;
+                }
+
+                if (!storedBakedLights && light.StationaryLightIndex < currentLightIndex)
+                {
+                    Log.Warn("Lightbinner", "Ommited light with duplicate baked light index.");
                     continue;
                 }
 
-                LightingData.LightPosition_Type[currentBakedLightIndex] = new Vector4(light.Position, (int)light.Type);
-                LightingData.LightDirection_InvRange[currentBakedLightIndex] = new Vector4(light.Direction, 1.0f / light.Range);
+                LightingData.LightPosition_Type[currentLightIndex] = new Vector4(light.Position, (int)light.Type);
+                LightingData.LightDirection_InvRange[currentLightIndex] = new Vector4(light.Direction, 1.0f / light.Range);
 
                 //Matrix4x4.Invert(light.Transform, out var lightToWorld);
-                LightingData.LightToWorld[currentBakedLightIndex] = light.Transform;
+                LightingData.LightToWorld[currentLightIndex] = light.Transform;
 
                 // TODO: Linear color
-                LightingData.LightColor_Brightness[currentBakedLightIndex] = new Vector4(light.Color, light.Brightness);
+                LightingData.LightColor_Brightness[currentLightIndex] = new Vector4(light.Color, light.Brightness);
+                LightingData.LightSpotInnerOuterCosines[currentLightIndex] = new Vector4(MathF.Cos(light.SpotInnerAngle), MathF.Cos(light.SpotOuterAngle), 0.0f, 0.0f);
+                LightingData.LightFallOff[currentLightIndex] = new Vector4(light.FallOff, light.Range, light.AttenuationLinear, light.AttenuationQuadratic);
 
-                LightingData.LightFallOff[currentBakedLightIndex] = new Vector4(light.FallOff, light.Range, 0.0f, 0.0f);
-
-                currentBakedLightIndex++;
+                currentLightIndex++;
             }
 
-            // Storing simple light count 0..255 so that dynamic lights can start from this index (if there's space!!)
-            LightingData.NumLightsBakedShadowIndex[0] = currentBakedLightIndex;
+            LightingData.NumLights[1] = currentLightIndex;
         }
 
         public void StoreLightMappedLights_V2(List<SceneLight> lights)
