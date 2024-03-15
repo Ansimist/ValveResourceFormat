@@ -851,7 +851,13 @@ public sealed class MapExtract
             }
 
             var key = property.Name;
-            var value = RemovePrefix(PropertyToEditString(property));
+            var value = PropertyToEditString(property);
+
+            if (key == "targetname")
+            {
+                value = RemoveTargetnamePrefix(value);
+            }
+
             mapEntity.EntityProperties.Add(key, value);
         }
 
@@ -863,7 +869,7 @@ public sealed class MapExtract
                 {
                     OutputName = connection.GetProperty<string>("m_outputName"),
                     TargetType = connection.GetInt32Property("m_targetType"),
-                    TargetName = RemovePrefix(connection.GetProperty<string>("m_targetName")),
+                    TargetName = RemoveTargetnamePrefix(connection.GetProperty<string>("m_targetName")),
                     InputName = connection.GetProperty<string>("m_inputName"),
                     OverrideParam = connection.GetProperty<string>("m_overrideParam"),
                     Delay = connection.GetFloatProperty("m_flDelay"),
@@ -944,16 +950,6 @@ public sealed class MapExtract
     static string StringBool(bool value)
         => value ? "1" : "0";
 
-    private static string RemovePrefix(string value)
-    {
-        string prefix = "[PR#]";
-        if (value.StartsWith(prefix))
-        {
-            return value.Substring(prefix.Length);
-        }
-        return value;
-    }
-
     private static string PropertyToEditString(EntityLump.EntityProperty property)
     {
         //var type = property.Type;
@@ -973,6 +969,18 @@ public sealed class MapExtract
             null => string.Empty,
             _ => data.ToString()
         };
+    }
+
+    private static string RemoveTargetnamePrefix(string value)
+    {
+        const string Prefix = "[PR#]";
+
+        if (!value.StartsWith(Prefix, StringComparison.Ordinal))
+        {
+            return value;
+        }
+
+        return value[Prefix.Length..];
     }
     #endregion Entities
 
