@@ -944,7 +944,15 @@ public sealed class MapExtract
     static string StringBool(bool value)
         => value ? "1" : "0";
 
-    private static string RemovePrefix(string value) => value.Replace("[PR#]", "");
+    private static string RemovePrefix(string value)
+    {
+        string prefix = "[PR#]";
+        if (value.StartsWith(prefix))
+        {
+            return value.Substring(prefix.Length);
+        }
+        return value;
+    }
 
     private static string PropertyToEditString(EntityLump.EntityProperty property)
     {
