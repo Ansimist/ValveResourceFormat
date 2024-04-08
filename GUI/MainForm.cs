@@ -80,19 +80,19 @@ namespace GUI
                     versionPlus += 8;
                 }
 
-                versionToolStripLabel.Text = string.Concat("v", version[..versionPlus]);
+                versionLabel.Text = string.Concat("v", version[..versionPlus]);
             }
             else
             {
-                versionToolStripLabel.Text = string.Concat("v", version);
+                versionLabel.Text = string.Concat("v", version);
 
 #if !CI_RELEASE_BUILD // Set in Directory.Build.props
-                versionToolStripLabel.Text += "-unstable";
+                versionLabel.Text += "-dev";
 #endif
             }
 
 #if DEBUG
-            versionToolStripLabel.Text += " (DEBUG)";
+            versionLabel.Text += " (DEBUG)";
 #endif
 
             searchForm = new SearchForm();
@@ -582,8 +582,6 @@ namespace GUI
                 {
                     t.Exception?.Flatten().Handle(ex =>
                     {
-                        loadingFile.Dispose();
-
                         var control = new CodeTextBox(ex.ToString());
 
                         tab.Controls.Add(control);
@@ -604,8 +602,6 @@ namespace GUI
 
                     try
                     {
-                        loadingFile.Dispose();
-
                         foreach (Control c in t.Result.Controls)
                         {
                             if (tab.IsDisposed || tab.Disposing)
@@ -628,6 +624,17 @@ namespace GUI
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.OnlyOnRanToCompletion,
+                TaskScheduler.FromCurrentSynchronizationContext());
+
+            task.ContinueWith(t =>
+                {
+                    tab.BeginInvoke(() =>
+                    {
+                        loadingFile.Dispose();
+                    });
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.None,
                 TaskScheduler.FromCurrentSynchronizationContext());
 
             return task;
