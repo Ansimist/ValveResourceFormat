@@ -14,7 +14,6 @@ using McMaster.Extensions.CommandLineUtils;
 using SteamDatabase.ValvePak;
 using ValveResourceFormat;
 using ValveResourceFormat.Blocks;
-using ValveResourceFormat.ClosedCaptions;
 using ValveResourceFormat.CompiledShader;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.ResourceTypes;
@@ -384,18 +383,15 @@ namespace Decompiler
                 }
             }
 
-            var magicData = new byte[4];
+            Span<byte> magicData = stackalloc byte[4];
 
-            int bytesRead;
-            var totalRead = 0;
-            while ((bytesRead = stream.Read(magicData, totalRead, magicData.Length - totalRead)) != 0)
+            if (stream.Length >= magicData.Length)
             {
-                totalRead += bytesRead;
+                stream.Read(magicData);
+                stream.Seek(-magicData.Length, SeekOrigin.Current);
             }
 
-            stream.Seek(-totalRead, SeekOrigin.Current);
-
-            var magic = BitConverter.ToUInt32(magicData, 0);
+            var magic = BitConverter.ToUInt32(magicData);
 
             switch (magic)
             {
@@ -403,7 +399,6 @@ namespace Decompiler
                 case ShaderFile.MAGIC: ParseVCS(path, stream, originalPath); return;
                 case ToolsAssetInfo.MAGIC2:
                 case ToolsAssetInfo.MAGIC: ParseToolsAssetInfo(path, stream); return;
-                case ClosedCaptions.MAGIC: ParseClosedCaptions(path, stream); return;
             }
 
             if (BinaryKV3.IsBinaryKV3(magic))
@@ -414,9 +409,34 @@ namespace Decompiler
 
             var pathExtension = Path.GetExtension(path);
 
+            const uint Source1Vcs = 0x06;
+            if (CollectStats && pathExtension == ".vcs" && magic == Source1Vcs)
+            {
+                return;
+            }
+
             if (pathExtension == ".vfont")
             {
                 ParseVFont(path);
+
+                return;
+            }
+            else if (FileExtract.TryExtractNonResource(stream, path, out var content))
+            {
+                if (OutputFile != null)
+                {
+                    var extension = Path.GetExtension(content.FileName);
+                    path = Path.ChangeExtension(path, extension);
+
+                    var outFilePath = GetOutputPath(path);
+                    DumpContentFile(outFilePath, content);
+                }
+                else
+                {
+                    var output = Encoding.UTF8.GetString(content.Data);
+                    Console.WriteLine(output);
+                }
+                content.Dispose();
 
                 return;
             }
@@ -602,22 +622,6 @@ namespace Decompiler
 
                     DumpFile(path, output);
                 }
-            }
-            catch (Exception e)
-            {
-                LogException(e, path);
-            }
-        }
-
-        private void ParseClosedCaptions(string path, Stream stream)
-        {
-            var captions = new ClosedCaptions();
-
-            try
-            {
-                captions.Read(path, stream);
-
-                Console.WriteLine(captions.ToString());
             }
             catch (Exception e)
             {

@@ -231,6 +231,36 @@ namespace ValveResourceFormat.IO
             return contentFile;
         }
 
+        /// <summary>
+        /// Extract content file from a non-resource stream.
+        /// </summary>
+        /// <param name="stream">Stream to be extracted or decompiled.</param>
+        public static ContentFile ExtractNonResource(Stream stream, string fileName)
+        {
+            Span<byte> buffer = stackalloc byte[4];
+            var read = stream.Read(buffer);
+            stream.Seek(-read, SeekOrigin.Current);
+            if (read != 4)
+            {
+                return null;
+            }
+
+            var magic = BitConverter.ToUInt32(buffer);
+
+            return magic switch
+            {
+                FlexSceneFile.FlexSceneFile.MAGIC => new FlexSceneExtract(stream).ToContentFile(),
+                ClosedCaptions.ClosedCaptions.MAGIC => new ClosedCaptionsExtract(stream, fileName).ToContentFile(),
+                _ => null,
+            };
+        }
+
+        public static bool TryExtractNonResource(Stream stream, string fileName, out ContentFile contentFile)
+        {
+            contentFile = ExtractNonResource(stream, fileName);
+            return contentFile != null;
+        }
+
         public static bool IsChildResource(Resource resource)
         {
             if (resource.EditInfo is ResourceEditInfo2 redi2)

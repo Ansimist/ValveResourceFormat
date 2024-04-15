@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using ValveResourceFormat.Utils;
 
@@ -477,8 +478,8 @@ namespace ValveResourceFormat.CompiledShader
     {
         None = 0x00,
         Attribute = 0x01,
-        DynamicExpression = 0x02,
-        Unkn3 = 0x04,
+        Dynamic = 0x02,
+        Expression = 0x04,
         DynMaterial = 0x08,
     }
 
@@ -534,7 +535,8 @@ namespace ValveResourceFormat.CompiledShader
             StringData = datareader.ReadNullTermStringAtPosition();
             datareader.BaseStream.Position += 64;
             Lead0 = (LeadFlags)datareader.ReadInt32();
-            if (Lead0.HasFlag(LeadFlags.DynamicExpression) && !Lead0.HasFlag(LeadFlags.DynMaterial))
+
+            if (HasDynamicExpression)
             {
                 var dynExpLen = datareader.ReadInt32();
                 DynExp = datareader.ReadBytes(dynExpLen);
@@ -596,6 +598,8 @@ namespace ValveResourceFormat.CompiledShader
                 FloatMaxs[i] = datareader.ReadSingle();
             }
 
+            Debug.Assert(!float.IsNaN(FloatMaxs[3]));
+
             ImageFormat = datareader.ReadInt32();
             ChannelCount = datareader.ReadInt32();
             for (var i = 0; i < 4; i++)
@@ -614,6 +618,11 @@ namespace ValveResourceFormat.CompiledShader
                 V65Data = datareader.ReadBytes(6);
             }
         }
+
+        public bool HasDynamicExpression
+            => Lead0.HasFlag(LeadFlags.Dynamic)
+            && Lead0.HasFlag(LeadFlags.Expression)
+            && !Lead0.HasFlag(LeadFlags.DynMaterial);
 
         public void PrintByteDetail(int vcsVersion)
         {
