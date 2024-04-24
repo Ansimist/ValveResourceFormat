@@ -2,8 +2,8 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using GUI.Controls;
 using GUI.Forms;
+using GUI.Types.PackageViewer;
 using GUI.Utils;
 using SteamDatabase.ValvePak;
 using ValveResourceFormat.IO;
@@ -153,7 +153,7 @@ namespace GUI.Types.Exporter
             }
         }
 
-        public static void ExtractFilesFromTreeNode(BetterTreeNode selectedNode, VrfGuiContext vrfGuiContext, bool decompile)
+        public static void ExtractFilesFromTreeNode(IBetterBaseItem selectedNode, VrfGuiContext vrfGuiContext, bool decompile)
         {
             if (!selectedNode.IsFolder)
             {
@@ -197,9 +197,9 @@ namespace GUI.Types.Exporter
             {
                 // When queuing files this way, it'll preserve the original tree
                 // which is probably unwanted behaviour? It works tho /shrug
-                foreach (ListViewItem item in items)
+                foreach (IBetterBaseItem item in items)
                 {
-                    extractDialog.QueueFiles((BetterTreeNode)item.Tag);
+                    extractDialog.QueueFiles(item);
                 }
 
                 extractDialog.Execute();

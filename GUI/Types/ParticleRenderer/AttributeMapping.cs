@@ -63,6 +63,10 @@ namespace GUI.Types.ParticleRenderer
                     input1 = parse.Float("m_flInput1");
                     output0 = parse.Float("m_flOutput0");
                     output1 = parse.Float("m_flOutput1");
+
+                    MathUtils.MinMaxFixUp(ref input0, ref input1);
+                    MathUtils.MinMaxFixUp(ref output0, ref output1);
+
                     break;
 
                 case PfMapType.Curve:

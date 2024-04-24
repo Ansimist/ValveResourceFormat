@@ -5,7 +5,7 @@ using GUI.Forms;
 using GUI.Utils;
 using SteamDatabase.ValvePak;
 
-namespace GUI.Controls
+namespace GUI.Types.PackageViewer
 {
     /// <summary>
     /// Represents a user control in which a TreeView and ListView are used to view a directory/file listing. In addition to a normal TreeView,
@@ -17,18 +17,17 @@ namespace GUI.Controls
         private static int SplitterWidth;
 
         public bool DeletedFilesRecovered { get; private set; }
-        public Types.Viewers.Package Viewer { get; }
+        public PackageViewer Viewer { get; }
 
-        public event TreeNodeMouseClickEventHandler TreeNodeMouseDoubleClick; // when a TreeNode is double clicked
-        public event TreeNodeMouseClickEventHandler TreeNodeRightClick; // when a TreeNode is single clicked
-        public event EventHandler<ListViewItemClickEventArgs> ListViewItemDoubleClick; // when a ListViewItem is double clicked
-        public event EventHandler<ListViewItemClickEventArgs> ListViewItemRightClick; // when a ListViewItem is single clicked
+        public event EventHandler<PackageEntry> OpenPackageEntry;
+        public event EventHandler<PackageContextMenuEventArgs> OpenContextMenu;
+        public event EventHandler<PackageEntry> PreviewFile;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="TreeViewWithSearchResults"/> class.
         /// Require a default constructor for the designer.
         /// </summary>
-        public TreeViewWithSearchResults(Types.Viewers.Package viewer)
+        public TreeViewWithSearchResults(PackageViewer viewer)
         {
             InitializeComponent();
 
@@ -46,6 +45,7 @@ namespace GUI.Controls
             mainListView.Disposed += MainListView_Disposed;
             mainListView.FullRowSelect = true;
 
+            mainListView.ListViewItemSorter = new ListViewColumnSorter();
             mainTreeView.HideSelection = false;
             mainTreeView.NodeMouseDoubleClick += MainTreeView_NodeMouseDoubleClick;
             mainTreeView.NodeMouseClick += MainTreeView_NodeMouseClick;
@@ -80,38 +80,78 @@ namespace GUI.Controls
 
         private void MainTreeView_NodeMouseDoubleClick(object sender, TreeNodeMouseClickEventArgs e)
         {
-            if (mainTreeView.SelectedNode is BetterTreeNode node && node.IsFolder)
+            if (mainTreeView.SelectedNode is not BetterTreeNode node || node.IsFolder)
             {
                 return;
             }
 
-            TreeNodeMouseDoubleClick?.Invoke(sender, e);
+            OpenPackageEntry?.Invoke(sender, node.PackageEntry);
         }
 
         private void MainTreeView_AfterSelect(object sender, TreeViewEventArgs e)
         {
-            // if user selected a folder, show the contents of that folder in the list view
-            if (e.Action != TreeViewAction.Unknown && ((BetterTreeNode)e.Node).IsFolder)
+            if (e.Action == TreeViewAction.Unknown)
             {
-                mainListView.BeginUpdate();
-                mainListView.Items.Clear();
-
-                foreach (BetterTreeNode node in e.Node.Nodes)
-                {
-                    AddNodeToListView(node);
-                }
-
-                mainListView.EndUpdate();
+                return;
             }
+
+            var realNode = (BetterTreeNode)e.Node;
+
+            // if user selected a folder, show the contents of that folder in the list view
+            if (realNode.IsFolder)
+            {
+                DisplayMainListView();
+                MainListView_DisplayNodes(realNode.PkgNode);
+            }
+            else
+            {
+                PreviewFile?.Invoke(sender, realNode.PackageEntry);
+            }
+        }
+
+        private void MainListView_DisplayNodes(VirtualPackageNode pkgNode)
+        {
+            mainListView.BeginUpdate();
+            mainListView.Items.Clear();
+
+            foreach (var (name, node) in pkgNode.Folders)
+            {
+                AddFolderToListView(name, node);
+            }
+
+            foreach (var file in pkgNode.Files)
+            {
+                AddFileToListView(file);
+            }
+
+            mainListView.Sort();
+            mainListView.EndUpdate();
         }
 
         private void MainTreeView_NodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)
         {
-            if (e.Button == MouseButtons.Right)
+            if (e.Button == MouseButtons.Right && e.Node is BetterTreeNode node)
             {
                 mainTreeView.SelectedNode = e.Node;
 
-                TreeNodeRightClick?.Invoke(sender, e);
+                if (node.PackageEntry != null)
+                {
+                    OpenContextMenu?.Invoke(sender, new PackageContextMenuEventArgs
+                    {
+                        Location = e.Location,
+                        PackageEntry = node.PackageEntry,
+                        TreeNode = (BetterTreeNode)e.Node
+                    });
+                }
+                else if (node.PkgNode != null)
+                {
+                    OpenContextMenu?.Invoke(sender, new PackageContextMenuEventArgs
+                    {
+                        Location = e.Location,
+                        PkgNode = node.PkgNode,
+                        TreeNode = (BetterTreeNode)e.Node
+                    });
+                }
             }
         }
 
@@ -161,6 +201,7 @@ namespace GUI.Controls
             control.VrfGuiContext = vrfGuiContext;
             control.Dock = DockStyle.Fill;
             control.ImageList = MainForm.ImageList;
+            control.BeforeExpand += Control_BeforeExpand;
             control.ShowRootLines = false;
 
             control.GenerateIconList([.. vrfGuiContext.CurrentPackage.Entries.Keys]);
@@ -173,47 +214,163 @@ namespace GUI.Controls
 
             var name = Path.GetFileName(vrfGuiContext.FileName);
             var vpkImage = MainForm.ImageListLookup["vpk"];
-            var root = new BetterTreeNode(name, 0u)
+
+            var rootVirtual = new VirtualPackageNode("root", 0, null);
+            mainTreeView.Root = rootVirtual;
+
+            foreach (var fileType in vrfGuiContext.CurrentPackage.Entries)
+            {
+                foreach (var file in fileType.Value)
+                {
+                    BetterTreeView.AddFileNode(rootVirtual, file);
+                }
+            }
+
+            var root = new BetterTreeNode(name, rootVirtual)
             {
                 Name = "root",
                 ImageIndex = vpkImage,
                 SelectedImageIndex = vpkImage,
             };
             control.Nodes.Add(root);
-            root.Expand();
-
-            control.TreeViewNodeSorter = new TreeViewFileSorter();
-
-            foreach (var fileType in vrfGuiContext.CurrentPackage.Entries)
-            {
-                foreach (var file in fileType.Value)
-                {
-                    control.AddFileNode(root, file);
-                }
-            }
 
             // Expand lone folders (common in maps vpks)
             var node = root;
 
-            while (node.Nodes.Count == 1)
+            do
             {
-                node = (BetterTreeNode)node.Nodes[0];
+                CreateNodes(node);
                 node.Expand();
+
+                if (node.Nodes.Count != 1)
+                {
+                    break;
+                }
+
+                node = (BetterTreeNode)node.FirstNode;
+            }
+            while (true);
+
+            control.TreeViewNodeSorter = new TreeViewFileSorter();
+            control.EndUpdate();
+        }
+
+        private void Control_BeforeExpand(object sender, TreeViewCancelEventArgs e)
+        {
+            CreateNodes((BetterTreeNode)e.Node);
+        }
+
+        private void CreateNodes(BetterTreeNode realNode)
+        {
+            var currentNode = realNode.PkgNode;
+
+            if (currentNode.CreatedNode != null)
+            {
+                return;
             }
 
-            control.EndUpdate();
+            currentNode.CreatedNode = realNode;
+            mainTreeView.BeginUpdate();
+            realNode.Nodes.Clear();
+
+            foreach (var node in currentNode.Folders)
+            {
+                var toAdd = new BetterTreeNode(node.Key, node.Value)
+                {
+                    ImageIndex = mainTreeView.FolderImage,
+                    SelectedImageIndex = mainTreeView.FolderImage,
+                };
+
+                if (node.Value.Files.Count > 0 || node.Value.Folders.Count > 0)
+                {
+                    toAdd.Nodes.Add(new BetterTreeNode(string.Empty, node.Value));
+                }
+
+                realNode.Nodes.Add(toAdd);
+            }
+
+            foreach (var file in currentNode.Files)
+            {
+                CreateFileNode(realNode, file);
+            }
+
+            mainTreeView.EndUpdate();
+        }
+
+        private void CreateFileNode(BetterTreeNode realNode, PackageEntry file, bool isCreating = false)
+        {
+            var fileName = file.GetFileName();
+            int image;
+
+            if (isCreating)
+            {
+                image = MainForm.GetImageIndexForExtension(file.TypeName.ToLowerInvariant());
+            }
+            else if (!mainTreeView.ExtensionIconList.TryGetValue(file.TypeName, out image))
+            {
+                image = MainForm.ImageListLookup["_default"];
+            }
+
+            var newNode = new BetterTreeNode(fileName, file)
+            {
+                ImageIndex = image,
+                SelectedImageIndex = image,
+            };
+
+            realNode.Nodes.Add(newNode);
+        }
+
+        private BetterTreeNode CreateTreeNodes(VirtualPackageNode node, bool isCreating = false)
+        {
+            var createdNode = node.CreatedNode;
+            var queue = new Stack<VirtualPackageNode>();
+
+            while (node.CreatedNode == null)
+            {
+                queue.Push(node);
+                node = node.Parent;
+            }
+
+            while (queue.TryPop(out node))
+            {
+                var parentTreeNode = node.Parent.CreatedNode;
+                var treeNode = (BetterTreeNode)parentTreeNode.Nodes[node.Name];
+
+                if (treeNode == null && isCreating)
+                {
+                    treeNode = new BetterTreeNode(node.Name, node)
+                    {
+                        ImageIndex = mainTreeView.FolderImage,
+                        SelectedImageIndex = mainTreeView.FolderImage,
+                    };
+                    parentTreeNode.Nodes.Add(treeNode);
+                }
+
+                CreateNodes(treeNode);
+
+                createdNode = node.CreatedNode;
+            }
+
+            return createdNode;
         }
 
         internal void AddFolderNode(string directoryName)
         {
-            var root = mainTreeView.Nodes[0] as BetterTreeNode;
-            mainTreeView.AddFolderNode(root, directoryName, 0u);
+            var root = mainTreeView.Root;
+            var node = BetterTreeView.AddFolderNode(root, directoryName, 0u);
+
+            CreateTreeNodes(node, true);
+
+            node.CreatedNode.EnsureVisible();
         }
 
         internal void AddFileNode(PackageEntry file)
         {
-            var root = mainTreeView.Nodes[0] as BetterTreeNode;
-            mainTreeView.AddFileNode(root, file, manualAdd: true);
+            var root = mainTreeView.Root;
+            var node = BetterTreeView.AddFileNode(root, file);
+
+            CreateTreeNodes(node, true);
+            CreateFileNode(node.CreatedNode, file, true);
         }
 
         internal void RecoverDeletedFiles()
@@ -228,7 +385,7 @@ namespace GUI.Controls
             {
                 progressDialog.SetProgress("Scanning for deleted files, this may take a while…");
 
-                var foundFiles = Types.Viewers.Package.RecoverDeletedFiles(mainTreeView.VrfGuiContext.CurrentPackage, progressDialog.SetProgress);
+                var foundFiles = Types.PackageViewer.PackageViewer.RecoverDeletedFiles(mainTreeView.VrfGuiContext.CurrentPackage, progressDialog.SetProgress);
 
                 Invoke((MethodInvoker)(() =>
                 {
@@ -236,10 +393,10 @@ namespace GUI.Controls
 
                     if (foundFiles.Count == 0)
                     {
-                        const string NO_FILES_FOUND = "No deleted files found";
-                        mainTreeView.Nodes.Add(new BetterTreeNode(NO_FILES_FOUND, 0)
+                        var rootVirtualNone = new VirtualPackageNode("No deleted files found", 0, null);
+                        mainTreeView.Nodes.Add(new BetterTreeNode(rootVirtualNone.Name, rootVirtualNone)
                         {
-                            Name = NO_FILES_FOUND,
+                            Name = "root_deleted",
                             ImageIndex = deletedImage,
                             SelectedImageIndex = deletedImage,
                         });
@@ -249,22 +406,26 @@ namespace GUI.Controls
                     mainTreeView.BeginUpdate();
 
                     var name = $"Deleted files ({foundFiles.Count} files found, names are guessed)";
-                    var root = new BetterTreeNode(name, 0u)
+                    var rootVirtual = new VirtualPackageNode(name, 0, null);
+
+                    foreach (var file in foundFiles)
                     {
-                        Name = name,
+                        BetterTreeView.AddFileNode(rootVirtual, file);
+                    }
+
+                    var root = new BetterTreeNode(rootVirtual.Name, rootVirtual)
+                    {
+                        Name = "root_deleted",
                         ImageIndex = deletedImage,
                         SelectedImageIndex = deletedImage,
                     };
                     mainTreeView.Nodes.Add(root);
-
-                    var vpkName = Path.GetFileName(mainTreeView.VrfGuiContext.CurrentPackage.FileName);
-
-                    foreach (var file in foundFiles)
-                    {
-                        mainTreeView.AddFileNode(root, file);
-                    }
+                    CreateNodes(root);
 
                     root.Expand();
+                    mainTreeView.SelectedNode = root;
+                    DisplayMainListView();
+                    MainListView_DisplayNodes(rootVirtual);
                     mainTreeView.EndUpdate();
                 }));
             };
@@ -362,25 +523,24 @@ namespace GUI.Controls
         /// <param name="selectedSearchType">Determines the matching of the value. For example, full/partial text search or full path search.</param>
         internal void SearchAndFillResults(string searchText, SearchType selectedSearchType)
         {
+            var results = mainTreeView.Search(searchText, selectedSearchType);
+
             mainListView.BeginUpdate();
             mainListView.Items.Clear();
 
-            var results = mainTreeView.Search(searchText, selectedSearchType);
-
-            foreach (var node in results)
+            foreach (var entry in results)
             {
-                AddNodeToListView(node);
+                AddFileToListView(entry);
             }
 
+            mainListView.Sort();
             ResizeListViewColumns();
-
+            DisplayMainListView();
             mainListView.EndUpdate();
         }
 
         private void MainListView_ColumnClick(object sender, ColumnClickEventArgs e)
         {
-            mainListView.ListViewItemSorter ??= new ListViewColumnSorter();
-
             var sorter = (ListViewColumnSorter)mainListView.ListViewItemSorter;
 
             if (e.Column == sorter.SortColumn)
@@ -414,28 +574,78 @@ namespace GUI.Controls
             var info = mainListView.HitTest(e.X, e.Y);
 
             // if an item was clicked in the list view
-            if (info.Item != null)
-            {
-                // right click should just notify our subscribers
-                if (e.Button == MouseButtons.Right)
-                {
-                    ListViewItemRightClick?.Invoke(sender, new ListViewItemClickEventArgs(info.Item, e.Location));
-                }
-                else if (e.Button == MouseButtons.Left)
-                {
-                    // left click should focus the node in its tree view
-                    var node = (BetterTreeNode)info.Item.Tag;
-
-                    if (node.IsFolder)
-                    {
-                        node.EnsureVisible();
-                        node.TreeView.SelectedNode = node;
-                    }
-                }
-            }
-            else
+            if (info.Item is not IBetterBaseItem item)
             {
                 mainListView.SelectedItems.Clear();
+                return;
+            }
+
+            // When left or right clicking a folder, expand it in the tree view
+            if (item.PkgNode != null && mainListView.SelectedItems.Count == 1)
+            {
+                mainTreeView.BeginUpdate();
+                var node = CreateTreeNodes(item.PkgNode);
+                node.EnsureVisible();
+                mainTreeView.SelectedNode = node;
+                mainTreeView.EndUpdate();
+            }
+
+            if (e.Button != MouseButtons.Right)
+            {
+                return;
+            }
+
+            if (item.PackageEntry != null)
+            {
+                // When right clicking a file, expand it in the tree view
+                if (mainListView.SelectedItems.Count == 1)
+                {
+                    var pkgNode = mainTreeView.Root;
+
+                    if (!string.IsNullOrWhiteSpace(item.PackageEntry.DirectoryName))
+                    {
+                        foreach (var subPathSpan in item.PackageEntry.DirectoryName.AsSpan().Split([Package.DirectorySeparatorChar]))
+                        {
+                            var subPath = subPathSpan.ToString();
+
+                            if (!pkgNode.Folders.TryGetValue(subPath, out var subNode))
+                            {
+                                throw new InvalidDataException("Failed to find sub path");
+                            }
+
+                            pkgNode = subNode;
+                        }
+                    }
+
+                    mainTreeView.BeginUpdate();
+                    var parentNode = CreateTreeNodes(pkgNode);
+
+                    foreach (BetterTreeNode node in parentNode.Nodes)
+                    {
+                        if (node.PackageEntry == item.PackageEntry)
+                        {
+                            node.EnsureVisible();
+                            mainTreeView.SelectedNode = node;
+                            break;
+                        }
+                    }
+
+                    mainTreeView.EndUpdate();
+                }
+
+                OpenContextMenu?.Invoke(sender, new PackageContextMenuEventArgs
+                {
+                    Location = e.Location,
+                    PackageEntry = item.PackageEntry,
+                });
+            }
+            else if (item.PkgNode != null)
+            {
+                OpenContextMenu?.Invoke(sender, new PackageContextMenuEventArgs
+                {
+                    Location = e.Location,
+                    PkgNode = item.PkgNode,
+                });
             }
         }
 
@@ -447,32 +657,33 @@ namespace GUI.Controls
         /// <param name="e">Event data.</param>
         private void MainListView_MouseDoubleClick(object sender, MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left)
+            if (e.Button != MouseButtons.Left)
             {
-                var info = mainListView.HitTest(e.X, e.Y);
+                return;
+            }
 
-                if (info.Item != null)
-                {
-                    // if user left double clicks a folder, open its contents and display in list view
-                    var node = info.Item.Tag as BetterTreeNode;
-                    if (node.IsFolder)
-                    {
-                        node.Expand();
-                        mainListView.BeginUpdate();
-                        mainListView.Items.Clear();
-                        foreach (BetterTreeNode childNode in node.Nodes)
-                        {
-                            AddNodeToListView(childNode);
-                        }
-                        mainListView.EndUpdate();
-                    }
+            var info = mainListView.HitTest(e.X, e.Y);
 
-                    ListViewItemDoubleClick?.Invoke(sender, new ListViewItemClickEventArgs(info.Item.Tag));
-                }
-                else
-                {
-                    mainListView.SelectedItems.Clear();
-                }
+            if (info.Item is not IBetterBaseItem item)
+            {
+                mainListView.SelectedItems.Clear();
+                return;
+            }
+
+            // if user left double clicks a folder, open its contents and display in list view
+            if (item.PkgNode != null)
+            {
+                mainTreeView.BeginUpdate();
+                var node = CreateTreeNodes(item.PkgNode);
+                node.Expand();
+                mainTreeView.SelectedNode = node;
+                mainTreeView.EndUpdate();
+
+                MainListView_DisplayNodes(item.PkgNode);
+            }
+            else if (item.PackageEntry != null)
+            {
+                OpenPackageEntry?.Invoke(sender, item.PackageEntry);
             }
         }
 
@@ -489,27 +700,74 @@ namespace GUI.Controls
             mainListView.SmallImageList = MainForm.ImageList;
         }
 
-        private void AddNodeToListView(BetterTreeNode node)
+        private void AddFolderToListView(string name, VirtualPackageNode node)
         {
-            var item = new ListViewItem(node.Text)
+            var item = new BetterListViewItem(name)
             {
-                ImageIndex = node.ImageIndex,
-                Tag = node,
+                ImageIndex = mainTreeView.FolderImage,
+                PkgNode = node,
             };
 
-            if (!node.IsFolder)
-            {
-                var file = node.PackageEntry;
-                item.SubItems.Add(HumanReadableByteSizeFormatter.Format(file.TotalLength));
-                item.SubItems.Add(file.TypeName);
-            }
-            else
-            {
-                item.SubItems.Add(HumanReadableByteSizeFormatter.Format(node.TotalSize));
-                item.SubItems.Add(string.Empty);
-            }
+            item.SubItems.Add(HumanReadableByteSizeFormatter.Format(node.TotalSize));
+            item.SubItems.Add(string.Empty);
 
             mainListView.Items.Add(item);
+        }
+
+        private void AddFileToListView(PackageEntry file)
+        {
+            if (!mainTreeView.ExtensionIconList.TryGetValue(file.TypeName, out var image))
+            {
+                image = MainForm.ImageListLookup["_default"];
+            }
+
+            var item = new BetterListViewItem(file.GetFileName())
+            {
+                ImageIndex = image,
+                PackageEntry = file,
+            };
+
+            item.SubItems.Add(HumanReadableByteSizeFormatter.Format(file.TotalLength));
+            item.SubItems.Add(file.TypeName);
+
+            mainListView.Items.Add(item);
+        }
+
+        public void ReplaceListViewWithControl(TabPage tab)
+        {
+            mainListView.Visible = false;
+
+            var tabs = new TabControl
+            {
+                ImageList = MainForm.ImageList,
+                Dock = DockStyle.Fill
+            };
+            tabs.Controls.Add(tab);
+
+            rightPanel.Controls.Add(tabs);
+
+            foreach (Control old in rightPanel.Controls)
+            {
+                if (old == tabs || old == mainListView) // TODO: dumb
+                {
+                    continue;
+                }
+
+                old.Dispose();
+            }
+        }
+
+        private void DisplayMainListView()
+        {
+            foreach (Control old in rightPanel.Controls)
+            {
+                if (old != mainListView)
+                {
+                    old.Dispose();
+                }
+            }
+
+            mainListView.Visible = true;
         }
     }
 }

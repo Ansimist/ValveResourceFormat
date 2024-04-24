@@ -6,13 +6,13 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using GUI.Controls;
 using GUI.Forms;
 using GUI.Types.Exporter;
+using GUI.Types.PackageViewer;
 using GUI.Types.Renderer;
 using GUI.Utils;
 using SteamDatabase.ValvePak;
@@ -330,7 +330,7 @@ namespace GUI
         private void ShowHideSearch()
         {
             // enable/disable the search button as necessary
-            if (mainTabs.SelectedTab != null && mainTabs.SelectedTab.Controls["TreeViewWithSearchResults"] is TreeViewWithSearchResults package)
+            if (mainTabs.SelectedTab != null && mainTabs.SelectedTab.Controls[nameof(TreeViewWithSearchResults)] is TreeViewWithSearchResults package)
             {
                 findToolStripButton.Enabled = true;
                 recoverDeletedToolStripMenuItem.Enabled = !package.DeletedFilesRecovered;
@@ -389,14 +389,7 @@ namespace GUI
             }
 
             mainTabs.TabPages.Remove(tab);
-            var oldTag = tab.Tag;
-            tab.Tag = null;
             tab.Dispose();
-
-            if (oldTag is ExportData exportData)
-            {
-                exportData.VrfGuiContext.Dispose();
-            }
         }
 
         private void CloseAllTabs()
@@ -530,8 +523,9 @@ namespace GUI
             Settings.TrackRecentFile(fileName);
         }
 
-        public Task<TabPage> OpenFile(VrfGuiContext vrfGuiContext, PackageEntry file)
+        public Task<TabPage> OpenFile(VrfGuiContext vrfGuiContext, PackageEntry file, TreeViewWithSearchResults packageTreeView = null)
         {
+            var isPreview = packageTreeView != null;
             var tabTemp = new TabPage(Path.GetFileName(vrfGuiContext.FileName))
             {
                 ToolTipText = vrfGuiContext.FileName,
@@ -542,6 +536,20 @@ namespace GUI
                 }
             };
             var tab = tabTemp;
+            tab.Disposed += OnTabDisposed;
+
+            void OnTabDisposed(object sender, EventArgs e)
+            {
+                tab.Disposed -= OnTabDisposed;
+
+                var oldTag = tab.Tag;
+                tab.Tag = null;
+
+                if (oldTag is ExportData exportData)
+                {
+                    exportData.VrfGuiContext.Dispose();
+                }
+            }
 
             try
             {
@@ -564,7 +572,12 @@ namespace GUI
                 tab.ImageIndex = GetImageIndexForExtension(extension);
 
                 mainTabs.TabPages.Insert(mainTabs.SelectedIndex + 1, tab);
-                mainTabs.SelectTab(tab);
+
+                if (!isPreview)
+                {
+                    mainTabs.SelectTab(tab);
+                }
+
                 tabTemp = null;
             }
             finally
@@ -575,7 +588,7 @@ namespace GUI
             var loadingFile = new LoadingFile();
             tab.Controls.Add(loadingFile);
 
-            var task = Task.Factory.StartNew(() => ProcessFile(vrfGuiContext, file));
+            var task = Task.Factory.StartNew(() => ProcessFile(vrfGuiContext, file, isPreview));
 
             task.ContinueWith(
                 t =>
@@ -631,6 +644,11 @@ namespace GUI
                     tab.BeginInvoke(() =>
                     {
                         loadingFile.Dispose();
+
+                        if (isPreview)
+                        {
+                            packageTreeView.ReplaceListViewWithControl(tab);
+                        }
                     });
                 },
                 CancellationToken.None,
@@ -640,7 +658,7 @@ namespace GUI
             return task;
         }
 
-        private static TabPage ProcessFile(VrfGuiContext vrfGuiContext, PackageEntry entry)
+        private static TabPage ProcessFile(VrfGuiContext vrfGuiContext, PackageEntry entry, bool isPreview)
         {
             Stream stream = null;
             Span<byte> magicData = stackalloc byte[6];
@@ -664,9 +682,9 @@ namespace GUI
             var magic = BitConverter.ToUInt32(magicData[..4]);
             var magicResourceVersion = BitConverter.ToUInt16(magicData[4..]);
 
-            if (Types.Viewers.Package.IsAccepted(magic))
+            if (Types.PackageViewer.PackageViewer.IsAccepted(magic))
             {
-                var tab = new Types.Viewers.Package().Create(vrfGuiContext, stream);
+                var tab = new PackageViewer().Create(vrfGuiContext, stream);
 
                 return tab;
             }
@@ -703,7 +721,7 @@ namespace GUI
             }
             else if (Types.Viewers.Resource.IsAccepted(magicResourceVersion))
             {
-                return new Types.Viewers.Resource().Create(vrfGuiContext, stream);
+                return new Types.Viewers.Resource().Create(vrfGuiContext, stream, isPreview);
             }
             else if (Types.Viewers.Image.IsAccepted(magic))
             {
@@ -739,266 +757,6 @@ namespace GUI
             }
         }
 
-        private static TabPage FetchToolstripTabContext(object sender)
-        {
-            var contextMenu = ((ToolStripMenuItem)sender).Owner;
-            var tabControl = ((ContextMenuStrip)((ToolStripMenuItem)sender).Owner).SourceControl as TabControl;
-            var tabs = tabControl.TabPages;
-
-            return tabs.Cast<TabPage>().Where((t, i) => tabControl.GetTabRect(i).Contains((Point)contextMenu.Tag)).First();
-        }
-
-        private void CloseToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            CloseTab(FetchToolstripTabContext(sender));
-        }
-
-        private void CloseToolStripMenuItemsToLeft_Click(object sender, EventArgs e)
-        {
-            CloseTabsToLeft(FetchToolstripTabContext(sender));
-        }
-
-        private void CloseToolStripMenuItemsToRight_Click(object sender, EventArgs e)
-        {
-            CloseTabsToRight(FetchToolstripTabContext(sender));
-        }
-
-        private void CloseToolStripMenuItems_Click(object sender, EventArgs e)
-        {
-            CloseAllTabs();
-        }
-
-        private void CopyFileNameToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            var control = ((ContextMenuStrip)((ToolStripMenuItem)sender).Owner).SourceControl;
-            VrfGuiContext context;
-            List<TreeNode> selectedNodes;
-
-            if (control is BetterTreeView treeView)
-            {
-                context = treeView.VrfGuiContext;
-                selectedNodes =
-                [
-                    treeView.SelectedNode
-                ];
-            }
-            else if (control is BetterListView listView)
-            {
-                context = listView.VrfGuiContext;
-                selectedNodes = new List<TreeNode>(listView.SelectedItems.Count);
-
-                foreach (ListViewItem selectedNode in listView.SelectedItems)
-                {
-                    selectedNodes.Add((BetterTreeNode)selectedNode.Tag);
-                }
-            }
-            else
-            {
-                throw new InvalidDataException("Unknown state");
-            }
-
-            var wantsFullPath = ModifierKeys.HasFlag(Keys.Shift);
-            var sb = new StringBuilder();
-
-            foreach (var selectedNode in selectedNodes.Cast<BetterTreeNode>())
-            {
-                if (wantsFullPath)
-                {
-                    sb.Append("vpk:");
-                    sb.Append(context.FileName);
-                    sb.Append(':');
-                }
-
-                if (!selectedNode.IsFolder)
-                {
-                    var packageEntry = selectedNode.PackageEntry;
-                    sb.AppendLine(packageEntry.GetFullPath());
-                }
-                else
-                {
-                    sb.AppendLine(selectedNode.Name);
-                }
-            }
-
-            Clipboard.SetText(sb.ToString().TrimEnd());
-        }
-
-        private void OpenWithDefaultAppToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            var control = ((ContextMenuStrip)((ToolStripMenuItem)sender).Owner).SourceControl;
-            List<BetterTreeNode> selectedNodes;
-
-            if (control is TreeView treeView)
-            {
-                var treeNode = (BetterTreeNode)treeView.SelectedNode;
-
-                if (treeNode.IsFolder)
-                {
-                    return;
-                }
-
-                selectedNodes = [treeNode];
-            }
-            else if (control is ListView listView)
-            {
-                selectedNodes = new List<BetterTreeNode>(listView.SelectedItems.Count);
-
-                foreach (ListViewItem selectedNode in listView.SelectedItems)
-                {
-                    var treeNode = (BetterTreeNode)selectedNode.Tag;
-
-                    if (treeNode.IsFolder)
-                    {
-                        return;
-                    }
-
-                    selectedNodes.Add(treeNode);
-                }
-            }
-            else
-            {
-                throw new InvalidDataException("Unknown state");
-            }
-
-            if (selectedNodes.Count > 5 && MessageBox.Show(
-                $"You are trying to open {selectedNodes.Count} files in the default app for each of these files, are you sure you want to continue?",
-                "Trying to open many files in the default app",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question
-            ) != DialogResult.Yes)
-            {
-                return;
-            }
-
-            foreach (var selectedNode in selectedNodes)
-            {
-                if (selectedNode.TreeView is not BetterTreeView nodeTreeView)
-                {
-                    throw new InvalidOperationException("Unexpected tree view");
-                }
-
-                var file = selectedNode.PackageEntry;
-                nodeTreeView.VrfGuiContext.CurrentPackage.ReadEntry(file, out var output, validateCrc: file.CRC32 > 0);
-
-                var tempPath = $"{Path.GetTempPath()}Source 2 Viewer - {Path.GetFileName(nodeTreeView.VrfGuiContext.CurrentPackage.FileName)} - {file.GetFileName()}";
-                using (var stream = new FileStream(tempPath, FileMode.Create))
-                {
-                    stream.Write(output, 0, output.Length);
-                }
-
-                try
-                {
-                    Process.Start(new ProcessStartInfo(tempPath) { UseShellExecute = true }).Start();
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(nameof(MainForm), $"Failed to start process: {ex.Message}");
-                }
-            }
-        }
-
-        private void OnViewAssetInfoToolStripMenuItemClick(object sender, EventArgs e)
-        {
-            var control = ((ContextMenuStrip)((ToolStripMenuItem)sender).Owner).SourceControl;
-            BetterTreeNode selectedNode;
-            VrfGuiContext guiContext;
-
-            if (control is BetterTreeView treeView)
-            {
-                guiContext = treeView.VrfGuiContext;
-                selectedNode = (BetterTreeNode)treeView.SelectedNode;
-            }
-            else if (control is BetterListView listView)
-            {
-                guiContext = listView.VrfGuiContext;
-                selectedNode = (BetterTreeNode)listView.SelectedItems[0].Tag;
-            }
-            else
-            {
-                throw new InvalidDataException("Unknown state");
-            }
-
-            if (selectedNode.IsFolder)
-            {
-                return;
-            }
-
-            var tab = Types.Viewers.SingleAssetInfo.Create(guiContext, selectedNode.PackageEntry);
-
-            if (tab != null)
-            {
-                mainTabs.TabPages.Add(tab);
-                mainTabs.SelectTab(tab);
-            }
-        }
-
-        private void DecompileToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            ExtractFiles(sender, true);
-        }
-
-        private void ExtractToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            ExtractFiles(sender, false);
-        }
-
-        private static void ExtractFiles(object sender, bool decompile)
-        {
-            var owner = (ContextMenuStrip)((ToolStripMenuItem)sender).Owner;
-
-            // Clicking context menu item in left side of the package view
-            if (owner.SourceControl is BetterTreeView tree)
-            {
-                ExportFile.ExtractFilesFromTreeNode((BetterTreeNode)tree.SelectedNode, tree.VrfGuiContext, decompile);
-            }
-            // Clicking context menu item in right side of the package view
-            else if (owner.SourceControl is BetterListView listView)
-            {
-                if (listView.SelectedItems.Count > 1)
-                {
-                    // We're selecting multiple files
-                    ExportFile.ExtractFilesFromListViewNodes(listView.SelectedItems, listView.VrfGuiContext, decompile);
-                }
-                else
-                {
-                    ExportFile.ExtractFilesFromTreeNode((BetterTreeNode)listView.SelectedItems[0].Tag, listView.VrfGuiContext, decompile);
-                }
-            }
-            // Clicking context menu item when right clicking a tab
-            else if (owner.SourceControl is TabControl)
-            {
-                var tabPage = FetchToolstripTabContext(sender);
-
-                if (tabPage.Tag is not ExportData exportData)
-                {
-                    throw new InvalidDataException("There is no export data for this tab");
-                }
-
-                if (exportData.PackageEntry != null)
-                {
-                    ExportFile.ExtractFileFromPackageEntry(exportData.PackageEntry, exportData.VrfGuiContext, decompile);
-                }
-                else
-                {
-                    var fileStream = File.OpenRead(exportData.VrfGuiContext.FileName);
-
-                    try
-                    {
-                        ExportFile.ExtractFileFromStream(Path.GetFileName(exportData.VrfGuiContext.FileName), fileStream, exportData.VrfGuiContext, decompile);
-                        fileStream = null; // ExtractFileFromStream should dispose it when done, not `using` here in case there's some threading
-                    }
-                    finally
-                    {
-                        fileStream?.Dispose();
-                    }
-                }
-            }
-            else
-            {
-                throw new InvalidDataException("Unknown state");
-            }
-        }
-
         /// <summary>
         /// When the user clicks to search from the toolbar, open a dialog with search options. If the user clicks OK in the dialog,
         /// perform a search in the selected tab's TreeView for the entered value and display the results in a ListView.
@@ -1014,41 +772,11 @@ namespace GUI
                 var searchText = searchForm.SearchText;
                 if (!string.IsNullOrEmpty(searchText) && mainTabs.TabCount > 0 && mainTabs.SelectedTab != null)
                 {
-                    var treeView = mainTabs.SelectedTab.Controls["TreeViewWithSearchResults"] as TreeViewWithSearchResults;
+                    var treeView = mainTabs.SelectedTab.Controls[nameof(TreeViewWithSearchResults)] as TreeViewWithSearchResults;
                     treeView.SearchAndFillResults(searchText, searchForm.SelectedSearchType);
                 }
             }
         }
-
-        private void RecoverDeletedToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            recoverDeletedToolStripMenuItem.Enabled = false;
-
-            var treeView = mainTabs.SelectedTab.Controls["TreeViewWithSearchResults"] as TreeViewWithSearchResults;
-            treeView.RecoverDeletedFiles();
-        }
-
-        private void VerifyPackageContentsToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            var treeView = mainTabs.SelectedTab.Controls["TreeViewWithSearchResults"] as TreeViewWithSearchResults;
-            treeView.VerifyPackageContents();
-        }
-
-        private void CreateVpkFromFolderToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            var contents = new Types.Viewers.Package().CreateEmpty(new VrfGuiContext("new.vpk", null));
-
-            var tab = new TabPage("New VPK")
-            {
-                ToolTipText = "New VPK"
-            };
-            tab.Controls.Add(contents);
-            tab.ImageIndex = ImageListLookup["vpk"];
-            mainTabs.TabPages.Add(tab);
-            mainTabs.SelectTab(tab);
-        }
-
-        private void RegisterVpkFileAssociationToolStripMenuItem_Click(object sender, EventArgs e) => SettingsForm.RegisterFileAssociation();
 
         private void OpenExplorer_Click(object sender, EventArgs e)
         {
@@ -1094,7 +822,24 @@ namespace GUI
                     loadingFile.Dispose();
                     explorerTabRef.Controls.Add(explorer);
                 });
-            });
+            }).ContinueWith(t =>
+            {
+                Log.Error(nameof(ExplorerControl), t.Exception.ToString());
+
+                t.Exception?.Flatten().Handle(ex =>
+                {
+                    loadingFile.Dispose();
+
+                    var control = new CodeTextBox(ex.ToString());
+
+                    explorerTabRef.Controls.Add(control);
+
+                    return false;
+                });
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.FromCurrentSynchronizationContext());
         }
 
         public static int GetImageIndexForExtension(string extension)

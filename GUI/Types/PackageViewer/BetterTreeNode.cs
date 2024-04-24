@@ -1,13 +1,13 @@
 using System.Windows.Forms;
 using SteamDatabase.ValvePak;
 
-namespace GUI.Controls
+namespace GUI.Types.PackageViewer
 {
     /// <summary>
     /// Wrapper class to store info about the contents of a <see cref="TreeNode"/> in a way that can be accessed rapidly
     /// </summary>
 #pragma warning disable CA2237 // Mark ISerializable types with SerializableAttribute
-    public sealed class BetterTreeNode : TreeNode
+    public sealed class BetterTreeNode : TreeNode, IBetterBaseItem
 #pragma warning restore CA2237
     {
         /// <summary>
@@ -16,31 +16,26 @@ namespace GUI.Controls
         public bool IsFolder => PackageEntry == null;
 
         /// <summary>
-        /// If this is a directory, summed up size of all the files in this dictionary (recursively). Otherwise -1.
-        /// </summary>
-        public long TotalSize { get; set; } = -1;
-
-        /// <summary>
         /// If this is a file, the <see cref="PackageEntry"/> representing the file. Otherwise null.
         /// </summary>
         public PackageEntry PackageEntry { get; }
 
         /// <summary>
-        /// Create a new instance of <see cref="VrfTreeViewData"/> for a file
+        /// If this is a folder, the virtual node representing this folder. Otherwise null.
         /// </summary>
+        public VirtualPackageNode PkgNode { get; }
+
         public BetterTreeNode(string text, PackageEntry entry)
             : base(text)
         {
             PackageEntry = entry;
         }
 
-        /// <summary>
-        /// Create a new instance of <see cref="VrfTreeViewData"/> for a directory
-        /// </summary>
-        public BetterTreeNode(string text, uint size)
+        public BetterTreeNode(string text, VirtualPackageNode node)
             : base(text)
         {
-            TotalSize = size;
+            Name = text; // Only set name for folders, it will be used for indexing
+            PkgNode = node;
         }
     }
 }

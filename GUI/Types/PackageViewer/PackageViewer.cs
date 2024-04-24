@@ -4,7 +4,7 @@ using System.IO.Enumeration;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
-using GUI.Controls;
+using GUI.Types.Viewers;
 using GUI.Utils;
 using SteamDatabase.ValvePak;
 using ValveResourceFormat;
@@ -12,10 +12,10 @@ using ValveResourceFormat.Blocks;
 using ValveResourceFormat.Blocks.ResourceEditInfoStructs;
 using ValveResourceFormat.IO;
 
-namespace GUI.Types.Viewers
+namespace GUI.Types.PackageViewer
 {
 #pragma warning disable CA1001 // TreeView is not owned by this class, set to null in VPK_Disposed
-    class Package : IViewer
+    class PackageViewer : IViewer
 #pragma warning restore CA1001
     {
         private VrfGuiContext VrfGuiContext;
@@ -33,7 +33,7 @@ namespace GUI.Types.Viewers
             VrfGuiContext = vrfGuiContext;
             IsEditingPackage = true;
 
-            var package = new SteamDatabase.ValvePak.Package();
+            var package = new Package();
             package.AddFile("README.txt", []); // TODO: Otherwise package.Entries is null
 
             vrfGuiContext.CurrentPackage = package;
@@ -48,7 +48,7 @@ namespace GUI.Types.Viewers
             VrfGuiContext = vrfGuiContext;
 
             var tab = new TabPage();
-            var package = new SteamDatabase.ValvePak.Package();
+            var package = new Package();
             package.OptimizeEntriesForBinarySearch(StringComparison.OrdinalIgnoreCase);
 
             if (stream != null)
@@ -74,10 +74,9 @@ namespace GUI.Types.Viewers
             // create a TreeView with search capabilities, register its events, and add it to the tab
             TreeView = new TreeViewWithSearchResults(this);
             TreeView.InitializeTreeViewFromPackage(VrfGuiContext);
-            TreeView.TreeNodeMouseDoubleClick += VPK_OpenFile;
-            TreeView.TreeNodeRightClick += VPK_OnContextMenu;
-            TreeView.ListViewItemDoubleClick += VPK_OpenFile;
-            TreeView.ListViewItemRightClick += VPK_OnContextMenu;
+            TreeView.OpenPackageEntry += VPK_OpenFile;
+            TreeView.OpenContextMenu += VPK_OnContextMenu;
+            TreeView.PreviewFile += VPK_PreviewFile;
             TreeView.Disposed += VPK_Disposed;
         }
 
@@ -142,7 +141,7 @@ namespace GUI.Types.Viewers
                 {
                     var magicResourceVersion = BitConverter.ToUInt16(data, 4);
 
-                    if (Resource.IsAccepted(magicResourceVersion) && name.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal))
+                    if (Viewers.Resource.IsAccepted(magicResourceVersion) && name.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal))
                     {
                         resourceEntries.Add(entry);
                     }
@@ -167,6 +166,11 @@ namespace GUI.Types.Viewers
 
         public void RemoveRecursiveFiles(BetterTreeNode node)
         {
+            if (node.PkgNode != null)
+            {
+                ((BetterTreeNode)node.Parent).PkgNode.Folders.Remove(node.PkgNode.Name);
+            }
+
             for (var i = node.Nodes.Count - 1; i >= 0; i--)
             {
                 RemoveRecursiveFiles((BetterTreeNode)node.Nodes[i]);
@@ -174,6 +178,7 @@ namespace GUI.Types.Viewers
 
             if (node.PackageEntry != null)
             {
+                ((BetterTreeNode)node.Parent).PkgNode.Files.Remove(node.PackageEntry);
                 VrfGuiContext.CurrentPackage.RemoveFile(node.PackageEntry);
             }
 
@@ -201,7 +206,7 @@ namespace GUI.Types.Viewers
 
             var result = $"Created {Path.GetFileName(fileName)} with {fileCount} files of size {HumanReadableByteSizeFormatter.Format(fileSize)}.";
 
-            Log.Info(nameof(Package), result);
+            Log.Info(nameof(PackageViewer), result);
 
             MessageBox.Show(
                 result,
@@ -211,7 +216,7 @@ namespace GUI.Types.Viewers
             );
         }
 
-        internal static List<PackageEntry> RecoverDeletedFiles(SteamDatabase.ValvePak.Package package, Action<string> setProgress)
+        internal static List<PackageEntry> RecoverDeletedFiles(Package package, Action<string> setProgress)
         {
             var allEntries = package.Entries
                 .SelectMany(file => file.Value)
@@ -230,7 +235,7 @@ namespace GUI.Types.Viewers
             {
                 if (archiveIndex - previousArchiveIndex > 1)
                 {
-                    Log.Warn(nameof(Package), $"There is probably an unused {previousArchiveIndex:D3}.vpk");
+                    Log.Warn(nameof(PackageViewer), $"There is probably an unused {previousArchiveIndex:D3}.vpk");
                 }
 
                 previousArchiveIndex = archiveIndex;
@@ -255,7 +260,7 @@ namespace GUI.Types.Viewers
                             break;
                         }
 
-                        offset = (offset + 16 - 1) & ~(16u - 1); // TODO: Validate this gap
+                        offset = offset + 16 - 1 & ~(16u - 1); // TODO: Validate this gap
 
                         var length = entryOffset - offset;
 
@@ -344,7 +349,7 @@ namespace GUI.Types.Viewers
                         }
                         catch (Exception ex)
                         {
-                            Log.Debug(nameof(Package), $"File {hiddenIndex} - {ex.Message}");
+                            Log.Debug(nameof(PackageViewer), $"File {hiddenIndex} - {ex.Message}");
 
                             newEntry.FileName += $" ({length} bytes)";
 
@@ -402,7 +407,7 @@ namespace GUI.Types.Viewers
                     }
                     catch (Exception e)
                     {
-                        Log.Debug(nameof(Package), e.Message);
+                        Log.Debug(nameof(PackageViewer), e.Message);
                     }
 
                     if (archiveFileSize != nextOffset)
@@ -412,7 +417,7 @@ namespace GUI.Types.Viewers
                 }
             }
 
-            Log.Info(nameof(Package), $"Found {hiddenIndex} deleted files totaling {HumanReadableByteSizeFormatter.Format(totalSlackSize)}");
+            Log.Info(nameof(PackageViewer), $"Found {hiddenIndex} deleted files totaling {HumanReadableByteSizeFormatter.Format(totalSlackSize)}");
 
             return hiddenFiles;
         }
@@ -460,10 +465,9 @@ namespace GUI.Types.Viewers
         {
             if (sender is TreeViewWithSearchResults treeViewWithSearch)
             {
-                treeViewWithSearch.TreeNodeMouseDoubleClick -= VPK_OpenFile;
-                treeViewWithSearch.TreeNodeRightClick -= VPK_OnContextMenu;
-                treeViewWithSearch.ListViewItemDoubleClick -= VPK_OpenFile;
-                treeViewWithSearch.ListViewItemRightClick -= VPK_OnContextMenu;
+                treeViewWithSearch.OpenPackageEntry -= VPK_OpenFile;
+                treeViewWithSearch.OpenContextMenu -= VPK_OnContextMenu;
+                treeViewWithSearch.PreviewFile -= VPK_PreviewFile;
                 treeViewWithSearch.Disposed -= VPK_Disposed;
                 TreeView = null;
                 LastContextTreeNode = null;
@@ -475,35 +479,29 @@ namespace GUI.Types.Viewers
         /// </summary>
         /// <param name="sender">Object which raised event.</param>
         /// <param name="e">Event data.</param>
-        private void VPK_OpenFile(object sender, ListViewItemClickEventArgs e)
+        private void VPK_OpenFile(object sender, PackageEntry entry)
         {
-            if (e.Node is not BetterTreeNode node)
-            {
-                throw new ArgumentException("Unexpected tree node type", nameof(e));
-            }
-
-            OpenFileFromNode(node);
+            var vrfGuiContext = new VrfGuiContext(entry.GetFullPath(), VrfGuiContext);
+            Program.MainForm.OpenFile(vrfGuiContext, entry);
         }
 
-        private void VPK_OpenFile(object sender, TreeNodeMouseClickEventArgs e)
+        private void VPK_PreviewFile(object sender, PackageEntry entry)
         {
-            if (e.Node is not BetterTreeNode node)
+            if (Settings.Config.QuickFilePreview <= 0)
             {
-                throw new ArgumentException("Unexpected tree node type", nameof(e));
+                return;
             }
 
-            OpenFileFromNode(node);
-        }
+            var extension = entry.TypeName;
 
-        private void OpenFileFromNode(BetterTreeNode node)
-        {
-            //Make sure we aren't a directory!
-            if (!node.IsFolder)
+            if (extension is "vpk" or "vmap_c")
             {
-                var file = node.PackageEntry;
-                var vrfGuiContext = new VrfGuiContext(file.GetFullPath(), VrfGuiContext);
-                Program.MainForm.OpenFile(vrfGuiContext, file);
+                // Not ideal to check by file extension, but do not nest vpk previewss
+                return;
             }
+
+            var vrfGuiContext = new VrfGuiContext(entry.GetFullPath(), VrfGuiContext);
+            Program.MainForm.OpenFile(vrfGuiContext, entry, TreeView);
         }
 
         private string GetCurrentPrefix()
@@ -520,46 +518,28 @@ namespace GUI.Types.Viewers
             return prefix;
         }
 
-        private void VPK_OnContextMenu(object sender, TreeNodeMouseClickEventArgs e)
-        {
-            var isRoot = e.Node is BetterTreeNode node && node.Level == 0 && node.Name == "root";
-
-            if (IsEditingPackage)
-            {
-                var treeNode = e.Node as BetterTreeNode;
-
-                LastContextTreeNode = treeNode;
-
-                Program.MainForm.ShowVpkEditingContextMenu(e.Node.TreeView, e.Location, isRoot, treeNode.IsFolder);
-                return;
-            }
-
-            Program.MainForm.ShowVpkContextMenu(e.Node.TreeView, e.Location, isRoot);
-        }
-
         /// <summary>
         /// Opens a context menu where the user right-clicked in the ListView.
         /// </summary>
         /// <param name="sender">Object which raised event.</param>
         /// <param name="e">Event data.</param>
-        private void VPK_OnContextMenu(object sender, ListViewItemClickEventArgs e)
+        private void VPK_OnContextMenu(object sender, PackageContextMenuEventArgs e)
         {
+            var isRoot = e.PkgNode == TreeView.mainTreeView.Root;
+
             if (IsEditingPackage)
             {
+                if (e.TreeNode != null)
+                {
+                    LastContextTreeNode = e.TreeNode;
+
+                    Program.MainForm.ShowVpkEditingContextMenu((Control)sender, e.Location, isRoot, e.TreeNode.IsFolder);
+                }
+
                 return;
             }
 
-            if (e.Node is ListViewItem listViewItem && listViewItem.Tag is TreeNode node)
-            {
-                if (node.TreeView != null)
-                {
-                    // Select the node in tree view when right clicking.
-                    // It can be null when right clicking an item from file contents search
-                    node.TreeView.SelectedNode = node;
-                }
-
-                Program.MainForm.ShowVpkContextMenu(listViewItem.ListView, e.Location, false);
-            }
+            Program.MainForm.ShowVpkContextMenu((Control)sender, e.Location, isRoot);
         }
     }
 }
