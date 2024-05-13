@@ -234,22 +234,8 @@ namespace GUI.Types.PackageViewer
             };
             control.Nodes.Add(root);
 
-            // Expand lone folders (common in maps vpks)
-            var node = root;
-
-            do
-            {
-                CreateNodes(node);
-                node.Expand();
-
-                if (node.Nodes.Count != 1)
-                {
-                    break;
-                }
-
-                node = (BetterTreeNode)node.FirstNode;
-            }
-            while (true);
+            CreateNodes(root);
+            root.Expand();
 
             control.TreeViewNodeSorter = new TreeViewFileSorter();
             control.EndUpdate();
@@ -257,7 +243,23 @@ namespace GUI.Types.PackageViewer
 
         private void Control_BeforeExpand(object sender, TreeViewCancelEventArgs e)
         {
-            CreateNodes((BetterTreeNode)e.Node);
+            mainTreeView.BeginUpdate();
+
+            var node = (BetterTreeNode)e.Node;
+            CreateNodes(node);
+
+            // If the folder we just expanded contains a single folder, expand it too.
+            if (node.Nodes.Count == 1)
+            {
+                node = (BetterTreeNode)node.FirstNode;
+
+                if (node.PkgNode != null && !node.IsExpanded)
+                {
+                    node.Expand();
+                }
+            }
+
+            mainTreeView.EndUpdate();
         }
 
         private void CreateNodes(BetterTreeNode realNode)
@@ -438,7 +440,7 @@ namespace GUI.Types.PackageViewer
             {
                 Text = "Verifying package…"
             };
-            progressDialog.OnProcess += (_, __) =>
+            progressDialog.OnProcess += (_, cancellationToken) =>
             {
                 var package = mainTreeView.VrfGuiContext.CurrentPackage;
 
@@ -456,7 +458,12 @@ namespace GUI.Types.PackageViewer
                     var processed = 0;
 
                     // This does not need to be perfect, ValvePak reports a string per file, and success strings.
-                    var maximum = package.Entries.Sum(x => x.Value.Count) + package.ArchiveMD5Entries.Count + 2;
+                    var maximum = package.ArchiveMD5Entries.Count + 2;
+
+                    if (package.ArchiveMD5Entries.Count == 0)
+                    {
+                        maximum += package.Entries.Sum(x => x.Value.Count);
+                    }
 
                     progressDialog.Invoke(() =>
                     {
@@ -468,6 +475,11 @@ namespace GUI.Types.PackageViewer
 
                     var progressReporter = new Progress<string>(progress =>
                     {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            return;
+                        }
+
                         var value = Math.Min(++processed, maximum);
 
                         var currentTime = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -487,23 +499,39 @@ namespace GUI.Types.PackageViewer
                         });
                     });
 
-                    package.VerifyChunkHashes(progressReporter);
-                    package.VerifyFileChecksums(progressReporter);
-
-                    progressDialog.Invoke(() =>
+                    if (!cancellationToken.IsCancellationRequested)
                     {
-                        progressDialog.SetBarValue(maximum);
-                    });
+                        package.VerifyChunkHashes(progressReporter);
+                    }
 
-                    MessageBox.Show(
-                        "Successfully verified package contents.",
-                        "Verified package contents",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Information
-                    );
+                    if (!cancellationToken.IsCancellationRequested && package.ArchiveMD5Entries.Count == 0)
+                    {
+                        package.VerifyFileChecksums(progressReporter);
+                    }
+
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        progressDialog.Invoke(() =>
+                        {
+                            progressDialog.SetBarValue(maximum);
+                        });
+
+                        MessageBox.Show(
+                            "Successfully verified package contents.",
+                            "Verified package contents",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information
+                        );
+                    }
                 }
                 catch (Exception e)
                 {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        Log.Error(nameof(Package), $"Failed to verify package contents: {e.Message}");
+                        return;
+                    }
+
                     MessageBox.Show(
                         e.Message,
                         "Failed to verify package contents",

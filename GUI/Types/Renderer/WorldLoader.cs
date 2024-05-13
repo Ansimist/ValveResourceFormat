@@ -5,7 +5,6 @@ using GUI.Utils;
 using OpenTK.Graphics.OpenGL;
 using SteamDatabase.ValvePak;
 using ValveResourceFormat;
-using ValveResourceFormat.IO;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization;
 using ValveResourceFormat.Utils;
@@ -63,6 +62,17 @@ namespace GUI.Types.Renderer
                 var entityLump = (EntityLump)newResource.DataBlock;
                 LoadEntitiesFromLump(entityLump, "world_layer_base", Matrix4x4.Identity); // TODO: Hardcoded layer name
             }
+
+            Action<List<SceneLight>> lightEntityStore = scene.LightingInfo.LightmapGameVersionNumber switch
+            {
+                0 or 1 => scene.LightingInfo.StoreLightMappedLights_V1,
+                2 => scene.LightingInfo.StoreLightMappedLights_V2,
+                _ => (List<SceneLight> x) => Log.Error(nameof(WorldLoader), $"Storing lights for lightmap version {scene.LightingInfo.LightmapGameVersionNumber} is not supported."),
+            };
+
+            lightEntityStore.Invoke(
+                scene.AllNodes.Where(n => n is SceneLight).Cast<SceneLight>().ToList()
+            );
 
             // Output is World_t we need to iterate m_worldNodes inside it.
             var worldNodes = world.GetWorldNodeNames();
@@ -249,6 +259,7 @@ namespace GUI.Types.Renderer
                 }
 
                 var transformationMatrix = parentTransform * EntityTransformHelper.CalculateTransformationMatrix(entity);
+                var light = SceneLight.IsAccepted(classname);
 
                 if (classname == "info_world_layer")
                 {
@@ -264,6 +275,13 @@ namespace GUI.Types.Renderer
                 else if (classname == "skybox_reference")
                 {
                     LoadSkybox(entity);
+                }
+                else if (light.Accepted)
+                {
+                    var lightNode = SceneLight.FromEntityProperties(scene, light.Type, entity);
+                    lightNode.Transform = transformationMatrix;
+                    lightNode.LayerName = layerName;
+                    scene.Add(lightNode, false);
                 }
                 else if (classname == "point_template")
                 {
@@ -529,7 +547,7 @@ namespace GUI.Types.Renderer
                     AABB bounds = default;
                     if (classname == "env_cubemap")
                     {
-                        var radius = entity.GetProperty<float>("influenceradius");
+                        var radius = entity.GetPropertyUnchecked<float>("influenceradius");
                         bounds = new AABB(-radius, -radius, -radius, radius, radius, radius);
                     }
                     else
@@ -698,24 +716,9 @@ namespace GUI.Types.Renderer
                     var cameraName = entity.GetProperty<string>("cameraname") ?? entity.GetProperty<string>("targetname") ?? classname;
                     CameraMatrices.Add((cameraName, transformationMatrix));
                 }
-                else if (classname == "env_global_light" || classname == "light_environment")
+                else if (classname == "env_global_light")
                 {
-                    var colorNormalized = entity.GetProperty("color").Data switch
-                    {
-                        byte[] bytes => new Vector3(bytes[0], bytes[1], bytes[2]),
-                        Vector3 vec => vec,
-                        Vector4 vec4 => new Vector3(vec4.X, vec4.Y, vec4.Z),
-                        _ => throw new NotImplementedException()
-                    } / 255.0f;
-
-                    var brightness = 1.0f;
-                    if (classname == "light_environment")
-                    {
-                        brightness = Convert.ToSingle(entity.GetProperty("brightness").Data, CultureInfo.InvariantCulture);
-                    }
-
-                    scene.LightingInfo.LightingData.SunLightPosition = transformationMatrix;
-                    scene.LightingInfo.LightingData.SunLightColor = new Vector4(colorNormalized, brightness);
+                    //
                 }
 
                 var rendercolor = entity.GetProperty("rendercolor");

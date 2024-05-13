@@ -53,10 +53,10 @@ namespace Decompiler
         [Option("-b|--block", "Print the content of a specific block, example: DATA, RERL, REDI, NTRO.", CommandOptionType.SingleValue)]
         public string BlockToPrint { get; }
 
-        [Option("--threads", "If more than 1, files will be processed concurrently.", CommandOptionType.SingleValue)]
+        [Option("--threads", "If higher than 1, files will be processed concurrently.", CommandOptionType.SingleValue)]
         public int MaxParallelismThreads { get; } = 1;
 
-        [Option("--vpk_dir", "Write a file with files in given VPK and their CRC.", CommandOptionType.NoValue)]
+        [Option("--vpk_dir", "Print a list of files in given VPK and information about them.", CommandOptionType.NoValue)]
         public bool OutputVPKDir { get; }
 
         [Option("--vpk_verify", "Verify checksums and signatures.", CommandOptionType.NoValue)]
@@ -85,6 +85,9 @@ namespace Decompiler
 
         [Option("--gltf_textures_adapt", "Whether to perform any glTF spec adaptations on textures (e.g. split metallic map).", CommandOptionType.NoValue)]
         public bool GltfExportAdaptTextures { get; }
+
+        [Option("--gltf_export_extras", "Export additional Mesh properties into glTF extras", CommandOptionType.NoValue)]
+        public bool GltfExportExtras { get; }
 
         [Option("--tools_asset_info_short", "Whether to print only file paths for tools_asset_info files.", CommandOptionType.NoValue)]
         public bool ToolsAssetInfoShort { get; }
@@ -911,11 +914,13 @@ namespace Decompiler
             }
 
             using var fileLoader = new GameFileLoader(package, package.FileName);
+            var progressReporter = new Progress<string>(progress => Console.WriteLine($"--- {progress}"));
             var gltfModelExporter = new GltfModelExporter(fileLoader)
             {
                 ExportMaterials = GltfExportMaterials,
                 AdaptTextures = GltfExportAdaptTextures,
-                ProgressReporter = new Progress<string>(progress => Console.WriteLine($"--- {progress}")),
+                ExportExtras = GltfExportExtras,
+                ProgressReporter = progressReporter,
             };
 
             foreach (var file in entries)
@@ -977,7 +982,8 @@ namespace Decompiler
 
                     extension = FileExtract.GetExtension(resource) ?? type[..^2];
 
-                    if (GltfModelExporter.CanExport(resource))
+                    // TODO: This is forcing gltf export - https://github.com/ValveResourceFormat/ValveResourceFormat/issues/782
+                    if (GltfModelExporter.CanExport(resource) && resource.ResourceType != ResourceType.EntityLump)
                     {
                         var outputExtension = GltfExportFormat;
                         var outputFile = Path.Combine(OutputFile, Path.ChangeExtension(filePath, outputExtension));
@@ -989,7 +995,7 @@ namespace Decompiler
                         continue;
                     }
 
-                    using var contentFile = FileExtract.Extract(resource, fileLoader);
+                    using var contentFile = FileExtract.Extract(resource, fileLoader, progressReporter);
 
                     if (OutputFile != null)
                     {
@@ -1059,7 +1065,7 @@ namespace Decompiler
 
                 return Path.Combine(OutputFile, inputPath);
             }
-            else if (useOutputAsDirectory)
+            else if (useOutputAsDirectory || Directory.Exists(OutputFile))
             {
                 return Path.Combine(OutputFile, inputPath);
             }
@@ -1222,6 +1228,7 @@ namespace Decompiler
                 var gltfModelExporter = new GltfModelExporter(new NullFileLoader())
                 {
                     ExportMaterials = false,
+                    ExportExtras = GltfExportExtras,
                     ProgressReporter = new Progress<string>(progress => { }),
                 };
                 gltfModelExporter.Export(resource, null); // Filename passed as null which tells exporter to write gltf to a null stream
