@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using static ValveResourceFormat.CompiledShader.ShaderDataReader;
 using static ValveResourceFormat.CompiledShader.ShaderUtilHelpers;
 
@@ -66,14 +67,14 @@ namespace ValveResourceFormat.CompiledShader
             output.BreakLine();
             output.WriteLine($"has additional file = {shaderFile.FeaturesHeader.AdditionalFiles}");
             var ftHeader = shaderFile.FeaturesHeader;
-            if (ftHeader.Arg8.Length > 0)
+            if (ftHeader.AdditionalFileFlags.Length > 0)
             {
-                output.WriteLine($"additional file bool flags ({string.Join(",", ftHeader.Arg8)})");
+                output.WriteLine($"additional file bool flags ({string.Join(",", ftHeader.AdditionalFileFlags)})");
             }
             output.WriteLine($"{nameof(shaderFile.FeaturesHeader.Version)} = {shaderFile.FeaturesHeader.Version}");
             output.WriteLine($"{nameof(ftHeader.DevShader)} = {ftHeader.DevShader}");
-            output.WriteLine($"bool flags = ({ftHeader.Arg1},{ftHeader.Arg2},{ftHeader.Arg3}," +
-                $"{ftHeader.Arg4},{ftHeader.Arg5},{ftHeader.Arg6},{ftHeader.Arg7}) (related to editor dependencies)");
+            output.WriteLine($"present files features={ftHeader.FeaturesFileFlags}, vs={ftHeader.VertexFileFlags}, ps={ftHeader.PixelFileFlags}, " +
+                $"gs={ftHeader.GeometryFileFlags}, cs={ftHeader.ComputeFileFlags}, hs={ftHeader.HullFileFlags}, ds={ftHeader.DomainFileFlags}");
             output.WriteLine($"possible editor description = {shaderFile.PossibleEditorDescription}");
             output.BreakLine();
             output.WriteLine("Editor/Shader compiler stack");
@@ -477,9 +478,12 @@ namespace ValveResourceFormat.CompiledShader
             }
             foreach (var channelBlock in shaderFile.ChannelBlocks)
             {
+                var channelRemap = channelBlock.Channel.Indices.Select((ind, i) => ind != 0 && ind != i).Any(b => b)
+                    ? $" [{string.Join(", ", channelBlock.Channel.Indices)}]"
+                    : string.Empty;
                 output.AddTabulatedRow([$"[{channelBlock.BlockIndex,2}]",
                     $"{channelBlock.TexProcessorName}",
-                    channelBlock.Channel.ToString(),
+                    channelBlock.Channel.ToString() + channelRemap,
                     string.Join(" ", channelBlock.InputTextureIndices),
                     $"{channelBlock.ColorMode,2}"]);
             }

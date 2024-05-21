@@ -21,7 +21,8 @@ namespace GUI.Types.Renderer
 
         public HashSet<string> DefaultEnabledLayers { get; } = ["Entities", "Particles"];
 
-        public List<(string Name, Matrix4x4 Transform)> CameraMatrices { get; } = [];
+        public List<string> CameraNames { get; } = [];
+        public List<Matrix4x4> CameraMatrices { get; } = [];
 
         public Scene SkyboxScene { get; set; }
         public SceneSkybox2D Skybox2D { get; set; }
@@ -167,7 +168,7 @@ namespace GUI.Types.Renderer
             if (scene.LightingInfo.LightmapVersionNumber == 8)
             {
                 result.LightmapGameVersionNumber = worldLightingInfo.GetInt32Property("m_nLightmapGameVersionNumber");
-                result.LightingData.LightmapUvScale = new Vector4(worldLightingInfo.GetSubCollection("m_vLightmapUvScale").ToVector2(), 0f, 0f);
+                result.LightingData.LightmapUvScale = worldLightingInfo.GetSubCollection("m_vLightmapUvScale").ToVector2();
             }
 
             foreach (var lightmap in worldLightingInfo.GetArray<string>("m_lightMaps"))
@@ -714,7 +715,8 @@ namespace GUI.Types.Renderer
                 if (IsCamera(classname))
                 {
                     var cameraName = entity.GetProperty<string>("cameraname") ?? entity.GetProperty<string>("targetname") ?? classname;
-                    CameraMatrices.Add((cameraName, transformationMatrix));
+                    CameraNames.Add(cameraName);
+                    CameraMatrices.Add(transformationMatrix);
                 }
                 else if (classname == "env_global_light")
                 {
@@ -928,9 +930,6 @@ namespace GUI.Types.Renderer
             }
 
             SkyboxScene = new Scene(guiContext);
-
-            SkyboxScene.FogInfo.GradientFogActive = scene.FogInfo.GradientFogActive;
-            SkyboxScene.FogInfo.CubeFogActive = scene.FogInfo.CubeFogActive;
 
             var skyboxResult = new WorldLoader((World)skyboxWorld.DataBlock, SkyboxScene);
 

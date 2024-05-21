@@ -91,12 +91,24 @@ namespace GUI.Types.Viewers
 
             tabControl.CreateShaderFileTab(shaderCollection, leadFileType);
 
-            var extract = new ShaderExtract(shaderCollection)
+            if (shaderCollection.Features is null)
             {
-                SpirvCompiler = SpvToHlsl,
-            };
+                return tab; // ShaderExtract cannot continue without the features file present
+            }
 
-            IViewer.AddContentTab<Func<string>>(tabControl, extract.GetVfxFileName(), extract.ToVFX, true);
+            try
+            {
+                var extract = new ShaderExtract(shaderCollection)
+                {
+                    SpirvCompiler = SpvToHlsl,
+                };
+
+                IViewer.AddContentTab<Func<string>>(tabControl, extract.GetVfxFileName(), extract.ToVFX, preSelect: true);
+            }
+            catch (Exception e)
+            {
+                IViewer.AddContentTab(tabControl, $"{nameof(ShaderExtract)} Error", e.ToString(), preSelect: false);
+            }
 
             return tab;
         }
@@ -241,7 +253,11 @@ namespace GUI.Types.Viewers
                     tabControl = null;
                 }
 
-                shaderCollection.Dispose();
+                if (shaderCollection != null)
+                {
+                    shaderCollection.Dispose();
+                    shaderCollection = null;
+                }
             }
         }
         public class ShaderRichTextBox : RichTextBox
