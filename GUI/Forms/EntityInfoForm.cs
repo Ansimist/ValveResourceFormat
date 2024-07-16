@@ -1,9 +1,9 @@
+using System.Globalization;
 using System.Windows.Forms;
 using GUI.Types.Viewers;
 using GUI.Utils;
 using ValveResourceFormat.Serialization;
 using ValveResourceFormat.Serialization.KeyValues;
-using System.Globalization;
 
 namespace GUI.Forms
 {
@@ -98,13 +98,28 @@ namespace GUI.Forms
             var delay = connectionData.GetFloatProperty("m_flDelay");
             var timesToFire = connectionData.GetInt32Property("m_nTimesToFire");
 
+            string stimesToFire = "";
+
+            switch (timesToFire)
+            {
+                case 1:
+                    stimesToFire = "Only Once";
+                    break;
+                case >= 2:
+                    stimesToFire = $"Only {timesToFire} Times";
+                    break;
+                default:
+                    stimesToFire = "Infinite";
+                    break;
+            }
+
             dataGridOutputs.Rows.Add(new string[] {
                 outputName,
                 targetName,
                 inputName,
                 parameter,
                 delay.ToString(NumberFormatInfo.InvariantInfo),
-                timesToFire == 1 ? "Yes" : "No"
+                stimesToFire
             });
         }
     }

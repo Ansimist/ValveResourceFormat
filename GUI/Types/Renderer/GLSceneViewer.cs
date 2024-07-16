@@ -107,6 +107,8 @@ namespace GUI.Types.Renderer
 
         protected override void Dispose(bool disposing)
         {
+            base.Dispose(disposing);
+
             if (disposing)
             {
                 viewBuffer?.Dispose();
@@ -131,8 +133,6 @@ namespace GUI.Types.Renderer
                 GuiContext.ShaderLoader.ShaderHotReload.ReloadShader -= OnHotReload;
 #endif
             }
-
-            base.Dispose(disposing);
         }
 
         protected abstract void InitializeControl();
@@ -376,6 +376,7 @@ namespace GUI.Types.Renderer
             viewBuffer.Data.ViewToProjection = Scene.LightingInfo.SunViewProjection;
             var worldToShadow = Scene.LightingInfo.SunViewProjection;
             viewBuffer.Data.WorldToShadow = worldToShadow;
+            viewBuffer.Data.SunLightShadowBias = Scene.LightingInfo.SunLightShadowBias;
             viewBuffer.Update();
 
             Scene.RenderOpaqueShadows(renderContext, depthOnlyShaders);
@@ -408,9 +409,9 @@ namespace GUI.Types.Renderer
                 GL.DepthRange(0, 0.05);
 
                 renderContext.ReplacementShader?.SetUniform1("isSkybox", 1u);
-                var Render3DSkybox = ShowSkybox && SkyboxScene != null;
+                var render3DSkybox = ShowSkybox && SkyboxScene != null;
 
-                if (Render3DSkybox)
+                if (render3DSkybox)
                 {
                     SkyboxScene.SetSceneBuffers();
                     renderContext.Scene = SkyboxScene;
@@ -424,7 +425,7 @@ namespace GUI.Types.Renderer
                     Skybox2D.Render();
                 }
 
-                if (Render3DSkybox)
+                if (render3DSkybox)
                 {
                     using (new GLDebugGroup("3D Sky Scene Translucent Render"))
                     {

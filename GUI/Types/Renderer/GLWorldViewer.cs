@@ -43,6 +43,8 @@ namespace GUI.Types.Renderer
 
         protected override void Dispose(bool disposing)
         {
+            base.Dispose(disposing);
+
             if (disposing)
             {
                 worldLayersComboBox?.Dispose();
@@ -51,8 +53,6 @@ namespace GUI.Types.Renderer
                 savedCameraPositionsControl?.Dispose();
                 entityInfoForm?.Dispose();
             }
-
-            base.Dispose(disposing);
         }
 
         protected override void InitializeControl()
@@ -181,7 +181,10 @@ namespace GUI.Types.Renderer
                     AddCheckBox("Show Skybox", ShowSkybox, (v) => ShowSkybox = v);
                 }
 
-                Skybox2D = result.Skybox2D;
+                if (result.Skybox2D != null)
+                {
+                    Skybox2D = result.Skybox2D;
+                }
 
                 var uniqueWorldLayers = new HashSet<string>(4);
                 var uniquePhysicsGroups = new HashSet<string>();
@@ -229,7 +232,7 @@ namespace GUI.Types.Renderer
 
                     cameraComboBox.BeginUpdate();
                     cameraComboBox.Items.Add("Set view to camera…");
-                    cameraComboBox.Items.AddRange(result.CameraNames.ToArray());
+                    cameraComboBox.Items.AddRange([.. result.CameraNames]);
                     cameraComboBox.SelectedIndex = 0;
                     cameraComboBox.EndUpdate();
 
@@ -337,6 +340,7 @@ namespace GUI.Types.Renderer
                     entityInfoForm.AddProperty("Light Probe Handshake", $"{sceneNode.LightProbeVolumePrecomputedHandshake}");
                 }
 
+                entityInfoForm.AddProperty("Flags", sceneNode.Flags.ToString());
                 entityInfoForm.AddProperty("Layer", sceneNode.LayerName);
             }
 

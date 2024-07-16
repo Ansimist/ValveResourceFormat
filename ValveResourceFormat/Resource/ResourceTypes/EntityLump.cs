@@ -11,6 +11,16 @@ namespace ValveResourceFormat.ResourceTypes
 {
     public class EntityLump : KeyValuesOrNTRO
     {
+        public static class CommonHashes
+        {
+            public static readonly uint Classname = StringToken.Get("classname");
+            public static readonly uint Origin = StringToken.Get("origin");
+            public static readonly uint Angles = StringToken.Get("angles");
+            public static readonly uint Scales = StringToken.Get("scales");
+            public static readonly uint HammerUniqueId = StringToken.Get("hammeruniqueid");
+            public static readonly uint Model = StringToken.Get("model");
+        }
+
         public class Entity
         {
             public Dictionary<uint, EntityProperty> Properties { get; } = [];
@@ -295,13 +305,14 @@ namespace ValveResourceFormat.ResourceTypes
 
                         var timesToFire = connection.GetInt32Property("m_nTimesToFire");
 
-                        if (timesToFire == 1)
+                        switch (timesToFire)
                         {
-                            builder.Append("OnlyOnce ");
-                        }
-                        else if (timesToFire != -1)
-                        {
-                            throw new UnexpectedMagicException("Unexpected times to fire", timesToFire, nameof(timesToFire));
+                            case 1:
+                                builder.Append("OnlyOnce ");
+                                break;
+                            case >= 2:
+                                builder.Append($"Only{timesToFire}Times ");
+                                break;
                         }
 
                         builder.Append(connection.GetProperty<string>("m_inputName"));
@@ -332,6 +343,132 @@ namespace ValveResourceFormat.ResourceTypes
                 {
                     builder.AppendLine(CultureInfo.InvariantCulture, $"key={unknownKey.Key} hits={unknownKey.Value}");
                 }
+            }
+
+            return builder.ToString();
+        }
+
+        public string ToForgeGameData()
+        {
+            var knownKeys = StringToken.InvertedTable;
+            var uniqueEntityProperties = new Dictionary<string, HashSet<(string Name, EntityFieldType Type)>>();
+            var uniqueEntityConnections = new Dictionary<string, HashSet<string>>();
+            var brushEntities = new HashSet<string>();
+
+            foreach (var entity in GetEntities())
+            {
+                var classname = entity.GetProperty<string>("classname").ToLowerInvariant();
+
+                if (!uniqueEntityProperties.TryGetValue(classname, out var entityProperties))
+                {
+                    entityProperties = [];
+                    uniqueEntityProperties.Add(classname, entityProperties);
+                }
+
+                foreach (var property in entity.Properties)
+                {
+                    string key;
+
+                    if (knownKeys.TryGetValue(property.Key, out var knownKey))
+                    {
+                        key = knownKey;
+                    }
+                    else if (property.Value.Name != null)
+                    {
+                        key = property.Value.Name;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    if (key is "hammeruniqueid" or "classname" or "angles" or "scales" or "origin")
+                    {
+                        continue;
+                    }
+
+                    if (property.Value.Type == EntityFieldType.CString && key == "model")
+                    {
+                        var model = (string)property.Value.Data;
+
+                        if (model.Contains("/entities/", StringComparison.Ordinal) || model.Contains("\\entities\\", StringComparison.Ordinal))
+                        {
+                            brushEntities.Add(classname);
+                        }
+                    }
+
+                    entityProperties.Add((key, property.Value.Type));
+                }
+
+                if (entity.Connections != null)
+                {
+                    if (!uniqueEntityConnections.TryGetValue(classname, out var entityConnections))
+                    {
+                        entityConnections = [];
+                        uniqueEntityConnections.Add(classname, entityConnections);
+                    }
+
+                    foreach (var connection in entity.Connections)
+                    {
+                        var outputName = connection.GetProperty<string>("m_outputName");
+
+                        entityConnections.Add(outputName);
+                    }
+                }
+            }
+
+            var builder = new StringBuilder();
+            builder.AppendLine(CultureInfo.InvariantCulture, $"// Generated with {StringToken.VRF_GENERATOR}");
+            builder.AppendLine();
+
+            foreach (var (classname, properties) in uniqueEntityProperties.OrderBy(x => x.Key))
+            {
+                if (brushEntities.Contains(classname))
+                {
+                    builder.Append("@SolidClass ");
+                }
+                else
+                {
+                    builder.Append("@PointClass ");
+                }
+
+                if (properties.RemoveWhere(x => x.Name == "targetname") > 0)
+                {
+                    builder.Append("base(Targetname) ");
+                }
+
+                builder.AppendLine(CultureInfo.InvariantCulture, $"{classname} : \"\"");
+                builder.AppendLine("[");
+
+                foreach (var property in properties.OrderBy(x => x.Name))
+                {
+                    var type = property.Type switch
+                    {
+                        EntityFieldType.Float64 => "float",
+                        EntityFieldType.Color32 => "color255",
+                        EntityFieldType.UInt => "integer",
+                        EntityFieldType.Integer64 => "integer",
+                        EntityFieldType.Vector or EntityFieldType.QAngle => "vector",
+                        EntityFieldType.CString => "string",
+                        _ => property.Type.ToString().ToLowerInvariant()
+                    };
+
+                    builder.AppendLine(CultureInfo.InvariantCulture, $"\t{property.Name}({type}) : \"\"");
+                }
+
+                if (uniqueEntityConnections.TryGetValue(classname, out var entityConnections) && entityConnections.Count > 0)
+                {
+                    builder.AppendLine();
+
+                    foreach (var connection in entityConnections.OrderBy(x => x))
+                    {
+                        // TODO: Inputs?
+                        builder.AppendLine(CultureInfo.InvariantCulture, $"\toutput {connection}(void) : \"\"");
+                    }
+                }
+
+                builder.AppendLine("]");
+                builder.AppendLine();
             }
 
             return builder.ToString();

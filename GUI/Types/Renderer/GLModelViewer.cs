@@ -43,6 +43,8 @@ namespace GUI.Types.Renderer
 
         protected override void Dispose(bool disposing)
         {
+            base.Dispose(disposing);
+
             if (disposing)
             {
                 animationComboBox?.Dispose();
@@ -55,8 +57,6 @@ namespace GUI.Types.Renderer
                 showSkeletonCheckbox?.Dispose();
                 hitboxComboBox?.Dispose();
             }
-
-            base.Dispose(disposing);
         }
 
         private void AddAnimationControls()
@@ -305,6 +305,7 @@ namespace GUI.Types.Renderer
             if (pickingResponse.PixelInfo.ObjectId == 0)
             {
                 selectedNodeRenderer.SelectNode(null);
+                selectedNodeRenderer.UpdateEveryFrame = false;
                 return;
             }
 
@@ -312,6 +313,7 @@ namespace GUI.Types.Renderer
             {
                 var sceneNode = Scene.Find(pickingResponse.PixelInfo.ObjectId);
                 selectedNodeRenderer.SelectNode(sceneNode);
+                selectedNodeRenderer.UpdateEveryFrame = true;
 
                 return;
             }

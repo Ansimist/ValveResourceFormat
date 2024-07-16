@@ -14,11 +14,12 @@ namespace GUI
 {
     partial class MainForm
     {
-        public void ShowVpkContextMenu(Control control, Point position, bool isRootNode)
+        public void ShowVpkContextMenu(Control control, Point position, bool isRootNode, bool isFolderNode)
         {
             copyFileNameToolStripMenuItem.Visible = !isRootNode;
-            openWithDefaultAppToolStripMenuItem.Visible = !isRootNode;
-            viewAssetInfoToolStripMenuItem.Visible = !isRootNode;
+            openWithDefaultAppToolStripMenuItem.Visible = !isRootNode && !isFolderNode;
+            viewAssetInfoToolStripMenuItem.Visible = !isRootNode && !isFolderNode;
+            toolStripSeparator3.Visible = isRootNode || !isFolderNode;
 
             verifyPackageContentsToolStripMenuItem.Visible = isRootNode;
             recoverDeletedToolStripMenuItem.Visible = isRootNode;
@@ -69,6 +70,16 @@ namespace GUI
 
         private void CopyFileNameToolStripMenuItem_Click(object sender, EventArgs e)
         {
+            CopyFileName(sender, wantsFullPath: false);
+        }
+
+        private void CopyFileNameOnDiskToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            CopyFileName(sender, wantsFullPath: true);
+        }
+
+        private static void CopyFileName(object sender, bool wantsFullPath)
+        {
             var control = ((ContextMenuStrip)((ToolStripMenuItem)sender).Owner).SourceControl;
             VrfGuiContext context;
             List<IBetterBaseItem> selectedNodes;
@@ -99,7 +110,6 @@ namespace GUI
                 throw new InvalidDataException("Unknown state");
             }
 
-            var wantsFullPath = ModifierKeys.HasFlag(Keys.Shift);
             var sb = new StringBuilder();
 
             foreach (var selectedNode in selectedNodes)
@@ -108,18 +118,27 @@ namespace GUI
                 {
                     sb.Append("vpk:");
                     sb.Append(context.FileName);
-                    sb.Append(':');
                 }
 
                 if (!selectedNode.IsFolder)
                 {
+                    if (wantsFullPath)
+                    {
+                        sb.Append(':');
+                    }
+
                     var packageEntry = selectedNode.PackageEntry;
-                    sb.AppendLine(packageEntry.GetFullPath());
+                    sb.Append(packageEntry.GetFullPath());
                 }
                 else
                 {
                     var stack = new Stack<string>();
                     var node = selectedNode.PkgNode;
+
+                    if (wantsFullPath && node.Parent != null)
+                    {
+                        sb.Append(':');
+                    }
 
                     do
                     {
@@ -138,12 +157,10 @@ namespace GUI
                         sb.Append(name);
                         sb.Append(Package.DirectorySeparatorChar);
                     }
-
-                    sb.AppendLine();
                 }
             }
 
-            Clipboard.SetText(sb.ToString().TrimEnd());
+            Clipboard.SetText(sb.ToString());
         }
 
         private void OpenWithDefaultAppToolStripMenuItem_Click(object sender, EventArgs e)

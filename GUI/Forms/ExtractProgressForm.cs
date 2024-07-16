@@ -16,6 +16,11 @@ namespace GUI.Forms
 {
     partial class ExtractProgressForm : Form
     {
+        private class ExtractProgress(Action<string> SetProgress) : IProgress<string>
+        {
+            public void Report(string value) => SetProgress(value);
+        }
+
         private class FileTypeToExtract
         {
             public string OutputFormat;
@@ -31,8 +36,9 @@ namespace GUI.Forms
         private readonly HashSet<string> extractedFiles = [];
         private CancellationTokenSource cancellationTokenSource = new();
         private readonly GltfModelExporter gltfExporter;
-        private readonly Progress<string> progressReporter;
+        private readonly IProgress<string> progressReporter;
         private Stopwatch exportStopwatch;
+        private int filesFailedToExport;
 
         private static readonly List<ResourceType> ExtractOrder =
         [
@@ -65,7 +71,7 @@ namespace GUI.Forms
             this.path = path;
             this.decompile = decompile;
             this.exportData = exportData;
-            progressReporter = new Progress<string>(SetProgress);
+            progressReporter = new ExtractProgress(SetProgress);
 
             if (decompile)
             {
@@ -231,6 +237,11 @@ namespace GUI.Forms
 
             Invoke(() =>
             {
+                if (filesFailedToExport > 0)
+                {
+                    SetProgress($"{filesFailedToExport} files failed to extract, check console for more information.");
+                }
+
                 Text = t.IsFaulted ? "Source 2 Viewer - Export failed, check console for details" : "Source 2 Viewer - Export completed";
                 cancelButton.Text = "Close";
                 extractProgressBar.Value = 100;
@@ -344,7 +355,20 @@ namespace GUI.Forms
                 {
                     FileName = fileFullName,
                 };
-                resource.Read(stream);
+
+                try
+                {
+                    resource.Read(stream);
+                }
+                catch (Exception e)
+                {
+                    filesFailedToExport++;
+
+                    Log.Error(nameof(ExtractProgressForm), $"Failed to extract '{fileFullName}': {e}");
+                    SetProgress($"Failed to extract '{fileFullName}': {e.Message}");
+
+                    continue;
+                }
 
                 await ExtractFile(resource, fileFullName, outFilePath).ConfigureAwait(false);
             }
@@ -423,6 +447,8 @@ namespace GUI.Forms
             }
             catch (Exception e)
             {
+                filesFailedToExport++;
+
                 Log.Error(nameof(ExtractProgressForm), $"Failed to extract '{inFilePath}': {e}");
                 SetProgress($"Failed to extract '{inFilePath}': {e.Message}");
             }
@@ -455,6 +481,8 @@ namespace GUI.Forms
                 }
                 catch (Exception e)
                 {
+                    filesFailedToExport++;
+
                     Log.Error(nameof(ExtractProgressForm), $"Failed to extract subfile '{contentSubFile.FileName}': {e}");
                     SetProgress($"Failed to extract subfile '{contentSubFile.FileName}': {e.Message}");
                     continue;
@@ -502,10 +530,16 @@ namespace GUI.Forms
                 return;
             }
 
-            Invoke(() =>
+            var str = $"[{DateTime.Now:HH:mm:ss.fff}] {text}{Environment.NewLine}";
+
+            if (progressLog.InvokeRequired)
             {
-                progressLog.AppendText($"[{DateTime.Now:HH:mm:ss.fff}] {text}{Environment.NewLine}");
-            });
+                progressLog.Invoke(progressLog.AppendText, str);
+            }
+            else
+            {
+                progressLog.AppendText(str);
+            }
         }
     }
 }
