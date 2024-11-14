@@ -12,6 +12,8 @@ namespace GUI.Types.Renderer
         Lightmap2,
         Lightmap3,
         Lightmap4,
+        Lightmap5,
+        Lightmap6,
         EnvironmentMap,
         Probe1,
         Probe2,
@@ -117,7 +119,8 @@ namespace GUI.Types.Renderer
 
             var blendMode = 0;
 
-            if (material.ShaderName.EndsWith("static_overlay.vfx", System.StringComparison.Ordinal))
+            if (material.ShaderName.EndsWith("static_overlay.vfx", StringComparison.Ordinal)
+                || material.ShaderName is "citadel_overlay.vfx")
             {
                 IsOverlay = true;
                 blendMode = (int)material.IntParams.GetValueOrDefault("F_BLEND_MODE");

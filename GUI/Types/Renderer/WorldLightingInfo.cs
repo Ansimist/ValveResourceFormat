@@ -113,7 +113,7 @@ partial class Scene
             {
                 (_, { Irradiance: null }) => false,
                 (1, { DirectLightIndices: null } or { DirectLightScalars: null }) => false,
-                (2, { DirectLightShadows: null }) => false,
+                (2 or 3, { DirectLightShadows: null }) => false,
                 _ => true,
             };
 
@@ -127,12 +127,12 @@ partial class Scene
             }
         }
 
-        public void UpdateSunLightFrustum(Camera camera, float orthoSize = 512f)
+        public void UpdateSunLightFrustum(Camera camera, float shadowMapSize = 512f)
         {
             var sunMatrix = LightingData.LightToWorld[0];
             var sunDir = Vector3.Normalize(Vector3.Transform(Vector3.UnitX, sunMatrix with { Translation = Vector3.Zero })); // why is sun dir calculated like so?.
 
-            var bbox = orthoSize;
+            var bbox = Math.Max(shadowMapSize / 2.5f, 512f);
             var farPlane = 8096f;
             var nearPlaneExtend = 1000f;
             var bias = 0.001f;
@@ -148,7 +148,7 @@ partial class Scene
                 var sceneBounds = staticBounds.Union(dynamicBounds);
                 var max = Math.Max(sceneBounds.Size.X, Math.Max(sceneBounds.Size.Y, sceneBounds.Size.Z));
 
-                if (max > 0 && max < orthoSize)
+                if (max > 0 && max < shadowMapSize)
                 {
                     nearPlaneExtend = max / 2f;
                     eye = staticBounds.Center - sunDir * nearPlaneExtend;
@@ -168,11 +168,36 @@ partial class Scene
 
         public void StoreLightMappedLights_V1(List<SceneLight> lights)
         {
-            var currentLightIndex = 0u;
-            var storedBakedLights = false;
+            void AddLight(SceneLight light, uint index)
+            {
+                LightingData.LightPosition_Type[index] = new Vector4(light.Position, (int)light.Type);
+                LightingData.LightDirection_InvRange[index] = new Vector4(light.Direction, 1.0f / light.Range);
 
-            foreach (var light in lights.OrderBy(l => l.StationaryLightIndex).Where(l => l.StationaryLightIndex >= 0)
-                .Concat(lights.Where(l => l.StationaryLightIndex == -1)))
+                //Matrix4x4.Invert(light.Transform, out var lightToWorld);
+                LightingData.LightToWorld[index] = light.Transform;
+
+                LightingData.LightColor_Brightness[index] = new Vector4(RenderMaterial.SrgbGammaToLinear(light.Color), light.Brightness);
+                LightingData.LightSpotInnerOuterCosines[index] = new Vector4(MathF.Cos(light.SpotInnerAngle), MathF.Cos(light.SpotOuterAngle), 0.0f, 0.0f);
+                LightingData.LightFallOff[index] = new Vector4(light.FallOff, light.Range, light.AttenuationLinear, light.AttenuationQuadratic);
+            }
+
+            var currentLightIndex = 0u;
+
+            foreach (var light in lights.Where(l => l.StationaryLightIndex >= 0).OrderBy(l => l.StationaryLightIndex))
+            {
+                currentLightIndex = (uint)light.StationaryLightIndex;
+
+                if (currentLightIndex >= LightingConstants.MAX_LIGHTS)
+                {
+                    continue;
+                }
+
+                AddLight(light, (uint)light.StationaryLightIndex);
+            }
+
+            LightingData.NumLights[0] = currentLightIndex + 1;
+
+            foreach (var light in lights.Where(l => l.StationaryLightIndex == -1))
             {
                 if (currentLightIndex >= LightingConstants.MAX_LIGHTS)
                 {
@@ -180,29 +205,7 @@ partial class Scene
                     break;
                 }
 
-                if (!storedBakedLights && light.StationaryLightIndex == -1)
-                {
-                    storedBakedLights = true;
-                    LightingData.NumLights[0] = currentLightIndex;
-                }
-
-                if (!storedBakedLights && light.StationaryLightIndex < currentLightIndex)
-                {
-                    Log.Warn("Lightbinner", "Ommited light with duplicate baked light index.");
-                    continue;
-                }
-
-                LightingData.LightPosition_Type[currentLightIndex] = new Vector4(light.Position, (int)light.Type);
-                LightingData.LightDirection_InvRange[currentLightIndex] = new Vector4(light.Direction, 1.0f / light.Range);
-
-                //Matrix4x4.Invert(light.Transform, out var lightToWorld);
-                LightingData.LightToWorld[currentLightIndex] = light.Transform;
-
-                LightingData.LightColor_Brightness[currentLightIndex] = new Vector4(RenderMaterial.SrgbGammaToLinear(light.Color), light.Brightness);
-                LightingData.LightSpotInnerOuterCosines[currentLightIndex] = new Vector4(MathF.Cos(light.SpotInnerAngle), MathF.Cos(light.SpotOuterAngle), 0.0f, 0.0f);
-                LightingData.LightFallOff[currentLightIndex] = new Vector4(light.FallOff, light.Range, light.AttenuationLinear, light.AttenuationQuadratic);
-
-                currentLightIndex++;
+                AddLight(light, currentLightIndex++);
             }
 
             LightingData.NumLights[1] = currentLightIndex;

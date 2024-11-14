@@ -7,7 +7,7 @@ namespace GUI.Types.ParticleRenderer.Renderers
 {
     internal class RenderTrails : ParticleFunctionRenderer
     {
-        private const string ShaderName = "vrf.particle.trail";
+        private const string ShaderName = "vrf.particle_trail";
 
         private readonly Shader shader;
         private readonly VrfGuiContext guiContext;
@@ -58,7 +58,7 @@ namespace GUI.Types.ParticleRenderer.Renderers
             }
             else
             {
-                texture = vrfGuiContext.MaterialLoader.GetTexture(textureName);
+                texture = vrfGuiContext.MaterialLoader.GetTexture(textureName, srgbRead: true);
             }
 
 #if DEBUG

@@ -147,6 +147,9 @@ namespace GUI.Types.Renderer
             camera.SetViewConstants(viewBuffer.Data);
             scene.SetFogConstants(viewBuffer.Data);
             viewBuffer.Update();
+
+            postProcessRenderer.State = scene.PostProcessInfo.CurrentState;
+            postProcessRenderer.TonemapScalar = scene.PostProcessInfo.CalculateTonemapScalar();
         }
 
         public virtual void PreSceneLoad()
@@ -184,6 +187,31 @@ namespace GUI.Types.Renderer
 
             var defaultCubeTexture = GuiContext.MaterialLoader.LoadTexture(cubeFogResource);
             Textures.Add(new(ReservedTextureSlots.FogCubeTexture, "g_tFogCubeTexture", defaultCubeTexture));
+
+
+            const string blueNoiseName = "blue_noise_256.vtex_c";
+            var blueNoiseResource = GuiContext.LoadFile("textures/dev/" + blueNoiseName);
+
+            try
+            {
+                Stream blueNoiseStream; // Same method as brdf
+
+                if (blueNoiseResource == null)
+                {
+                    blueNoiseStream = assembly.GetManifestResourceStream("GUI.Utils." + blueNoiseName);
+
+                    blueNoiseResource = new Resource() { FileName = blueNoiseName };
+                    blueNoiseResource.Read(blueNoiseStream);
+                }
+
+                // only needed here for now, move to GLSceneViewer
+                postProcessRenderer.BlueNoise = GuiContext.MaterialLoader.LoadTexture(blueNoiseResource);
+            }
+            finally
+            {
+                blueNoiseResource?.Dispose();
+            }
+
         }
 
         public virtual void PostSceneLoad()
@@ -241,11 +269,7 @@ namespace GUI.Types.Renderer
 
             Picker = new PickingTexture(Scene.GuiContext, OnPicked);
 
-            var shadowQuality = this switch
-            {
-                GLSingleNodeViewer => 1024,
-                _ => 2048,
-            };
+            var shadowQuality = Settings.Config.ShadowResolution;
 
             ShadowDepthBuffer = Framebuffer.Prepare(shadowQuality, shadowQuality, 0, null, Framebuffer.DepthAttachmentFormat.Depth32F);
             ShadowDepthBuffer.Initialize();
@@ -298,9 +322,11 @@ namespace GUI.Types.Renderer
                 Scene.Update(e.FrameTime);
                 SkyboxScene?.Update(e.FrameTime);
 
+                Scene.PostProcessInfo.UpdatePostProcessing(Camera);
+
                 selectedNodeRenderer.Update(new Scene.UpdateContext(e.FrameTime));
 
-                Scene.SetupSceneShadows(Camera);
+                Scene.SetupSceneShadows(Camera, ShadowDepthBuffer.Width);
                 Scene.CollectSceneDrawCalls(Camera, lockedCullFrustum);
                 SkyboxScene?.CollectSceneDrawCalls(Camera, lockedCullFrustum);
             }
@@ -385,9 +411,10 @@ namespace GUI.Types.Renderer
         private void RenderScenesWithView(Scene.RenderContext renderContext)
         {
             GL.Viewport(0, 0, renderContext.Framebuffer.Width, renderContext.Framebuffer.Height);
-            renderContext.Framebuffer.Clear();
+            renderContext.Framebuffer.BindAndClear();
 
             // TODO: check if renderpass allows wireframe mode
+            // TODO+: replace wireframe shaders with solid color
             if (IsWireframe)
             {
                 GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);

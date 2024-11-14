@@ -53,18 +53,7 @@ namespace ValveResourceFormat
         /// Gets or sets the type of the resource.
         /// </summary>
         /// <value>The type of the resource.</value>
-        public ResourceType ResourceType { get; set; }
-
-        /// <summary>
-        /// Gets the ResourceExtRefList block.
-        /// </summary>
-        public ResourceExtRefList ExternalReferences
-        {
-            get
-            {
-                return (ResourceExtRefList)GetBlockByType(BlockType.RERL);
-            }
-        }
+        public ResourceType ResourceType { get; private set; }
 
         /// <summary>
         /// Gets the ResourceEditInfo block.
@@ -72,37 +61,14 @@ namespace ValveResourceFormat
         public ResourceEditInfo EditInfo { get; private set; }
 
         /// <summary>
-        /// Gets the ResourceIntrospectionManifest block.
+        /// Gets the ResourceExtRefList block.
         /// </summary>
-        public ResourceIntrospectionManifest IntrospectionManifest
-        {
-            get
-            {
-                return (ResourceIntrospectionManifest)GetBlockByType(BlockType.NTRO);
-            }
-        }
-
-        /// <summary>
-        /// Gets the Vertex and Index Buffer block.
-        /// </summary>
-        public VBIB VBIB
-        {
-            get
-            {
-                return (VBIB)GetBlockByType(BlockType.VBIB);
-            }
-        }
+        public ResourceExtRefList ExternalReferences => (ResourceExtRefList)GetBlockByType(BlockType.RERL);
 
         /// <summary>
         /// Gets the generic DATA block.
         /// </summary>
-        public ResourceData DataBlock
-        {
-            get
-            {
-                return (ResourceData)GetBlockByType(BlockType.DATA);
-            }
-        }
+        public ResourceData DataBlock => (ResourceData)GetBlockByType(BlockType.DATA);
 
         /// <summary>
         /// Resource files have a FileSize in the metadata, however
@@ -196,7 +162,7 @@ namespace ValveResourceFormat
 
             FileSize = Reader.ReadUInt32();
 
-            if (FileSize == 0x55AA1234)
+            if (FileSize == SteamDatabase.ValvePak.Package.MAGIC)
             {
                 throw new InvalidDataException("Use ValvePak library to parse VPK files.\nSee https://github.com/ValveResourceFormat/ValvePak");
             }
@@ -278,11 +244,9 @@ namespace ValveResourceFormat
                         EditInfo = (ResourceEditInfo)block;
 
                         // Try to determine resource type by looking at the compiler indentifiers
-                        if (ResourceType == ResourceType.Unknown && EditInfo.Structs.TryGetValue(ResourceEditInfo.REDIStruct.SpecialDependencies, out var specialBlock))
+                        if (ResourceType == ResourceType.Unknown)
                         {
-                            var specialDeps = (SpecialDependencies)specialBlock;
-
-                            foreach (var specialDep in specialDeps.List)
+                            foreach (var specialDep in EditInfo.SpecialDependencies)
                             {
                                 ResourceType = DetermineResourceTypeByCompilerIdentifier(specialDep);
 
@@ -294,14 +258,9 @@ namespace ValveResourceFormat
                         }
 
                         // Try to determine resource type by looking at the input dependency if there is only one
-                        if (ResourceType == ResourceType.Unknown && EditInfo.Structs.TryGetValue(ResourceEditInfo.REDIStruct.InputDependencies, out var inputBlock))
+                        if (ResourceType == ResourceType.Unknown && EditInfo.InputDependencies.Count == 1)
                         {
-                            var inputDeps = (InputDependencies)inputBlock;
-
-                            if (inputDeps.List.Count == 1)
-                            {
-                                ResourceType = ResourceTypeExtensions.DetermineByFileExtension(Path.GetExtension(inputDeps.List[0].ContentRelativeFilename));
-                            }
+                            ResourceType = ResourceTypeExtensions.DetermineByFileExtension(Path.GetExtension(EditInfo.InputDependencies[0].ContentRelativeFilename));
                         }
 
                         break;
@@ -408,185 +367,108 @@ namespace ValveResourceFormat
 
         private ResourceData ConstructResourceType()
         {
-            switch (ResourceType)
+            return ResourceType switch
             {
-                case ResourceType.Panorama:
-                case ResourceType.PanoramaScript:
-                case ResourceType.PanoramaTypescript:
-                case ResourceType.PanoramaVectorGraphic:
-                    return new Panorama();
-
-                case ResourceType.PanoramaStyle:
-                    return new PanoramaStyle();
-
-                case ResourceType.PanoramaLayout:
-                    return new PanoramaLayout();
-
-                case ResourceType.PanoramaDynamicImages:
-                    return new PanoramaDynamicImages();
-
-                case ResourceType.Sound:
-                    return new Sound();
-
-                case ResourceType.Texture:
-                    return new Texture();
-
-                case ResourceType.Model:
-                    return new Model();
-
-                case ResourceType.Morph:
-                    return new Morph(BlockType.DATA);
-
-                case ResourceType.World:
-                    return new World();
-
-                case ResourceType.WorldNode:
-                    return new WorldNode();
-
-                case ResourceType.EntityLump:
-                    return new EntityLump();
-
-                case ResourceType.Map:
-                    return new Map();
-
-                case ResourceType.Material:
-                    return new Material();
-
-                case ResourceType.SoundStackScript:
-                    return new SoundStackScript();
-
-                case ResourceType.Particle:
-                    return new ParticleSystem();
-
-                case ResourceType.PostProcessing:
-                    return new PostProcessing();
-
-                case ResourceType.ResourceManifest:
-                    return new ResourceManifest();
-
-                case ResourceType.ResponseRules:
-                    return new ResponseRules();
-
-                case ResourceType.SboxManagedResource:
-                case ResourceType.ArtifactItem:
-                case ResourceType.DotaHeroList:
-                    return new Plaintext();
-
-                case ResourceType.Shader:
-                    return new SboxShader();
-
-                case ResourceType.PhysicsCollisionMesh:
-                    return new PhysAggregateData();
-
-                case ResourceType.SmartProp:
-                    return new SmartProp();
-
-                case ResourceType.AnimationGraph:
-                    return new AnimGraph();
-
-                case ResourceType.Mesh:
-                    return new Mesh(BlockType.DATA);
-
-                case ResourceType.ChoreoSceneFileData:
-                    return new ChoreoSceneFileData();
-            }
-
-            if (ContainsBlockType(BlockType.NTRO))
-            {
-                return new NTRO();
-            }
-
-            return new ResourceData();
+                ResourceType.AnimationGraph => new AnimGraph(),
+                ResourceType.ChoreoSceneFileData => new ChoreoSceneFileData(),
+                ResourceType.EntityLump => new EntityLump(),
+                ResourceType.Map => new Map(),
+                ResourceType.Material => new Material(),
+                ResourceType.Mesh => new Mesh(BlockType.DATA),
+                ResourceType.Model => new Model(),
+                ResourceType.Morph => new Morph(BlockType.DATA),
+                ResourceType.Panorama or ResourceType.PanoramaScript or ResourceType.PanoramaTypescript or ResourceType.PanoramaVectorGraphic => new Panorama(),
+                ResourceType.PanoramaDynamicImages => new PanoramaDynamicImages(),
+                ResourceType.PanoramaLayout => new PanoramaLayout(),
+                ResourceType.PanoramaStyle => new PanoramaStyle(),
+                ResourceType.Particle => new ParticleSystem(),
+                ResourceType.PhysicsCollisionMesh => new PhysAggregateData(),
+                ResourceType.PostProcessing => new PostProcessing(),
+                ResourceType.ResourceManifest => new ResourceManifest(),
+                ResourceType.ResponseRules => new ResponseRules(),
+                ResourceType.SboxManagedResource or ResourceType.ArtifactItem or ResourceType.DotaHeroList => new Plaintext(),
+                ResourceType.Shader => new SboxShader(),
+                ResourceType.SmartProp => new SmartProp(),
+                ResourceType.Sound => new Sound(),
+                ResourceType.SoundStackScript => new SoundStackScript(),
+                ResourceType.Texture => new Texture(),
+                ResourceType.World => new World(),
+                ResourceType.WorldNode => new WorldNode(),
+                _ => ContainsBlockType(BlockType.NTRO) ? new NTRO() : new ResourceData(),
+            };
         }
 
         private static bool IsHandledResourceType(ResourceType type)
         {
-            return type == ResourceType.Model
-                   || type == ResourceType.Mesh
-                   || type == ResourceType.World
-                   || type == ResourceType.WorldNode
-                   || type == ResourceType.Particle
-                   || type == ResourceType.Material
-                   || type == ResourceType.EntityLump
-                   || type == ResourceType.PhysicsCollisionMesh
-                   || type == ResourceType.Morph
-                   || type == ResourceType.SmartProp
-                   || type == ResourceType.AnimationGraph
-                   || type == ResourceType.PostProcessing;
+            return type
+                is ResourceType.Model
+                or ResourceType.Mesh
+                or ResourceType.World
+                or ResourceType.WorldNode
+                or ResourceType.Particle
+                or ResourceType.Material
+                or ResourceType.EntityLump
+                or ResourceType.PhysicsCollisionMesh
+                or ResourceType.Morph
+                or ResourceType.SmartProp
+                or ResourceType.AnimationGraph
+                or ResourceType.PostProcessing;
         }
 
-        private static ResourceType DetermineResourceTypeByCompilerIdentifier(SpecialDependencies.SpecialDependency input)
+        private static ResourceType DetermineResourceTypeByCompilerIdentifier(SpecialDependency input)
         {
-            var identifier = input.CompilerIdentifier;
+            var identifier = input.CompilerIdentifier.AsSpan();
 
             if (identifier.StartsWith("Compile", StringComparison.Ordinal))
             {
-                identifier = identifier.Remove(0, "Compile".Length);
+                identifier = identifier["Compile".Length..];
             }
 
             // Special mappings and otherwise different identifiers
-            switch (identifier)
+            var resourceType = identifier switch
             {
-                case "Psf":
-                    return ResourceType.ParticleSnapshot;
-                case "AnimGroup":
-                    return ResourceType.AnimationGroup;
-                case "Animgraph":
-                    return ResourceType.AnimationGraph;
-                case "VPhysXData":
-                    return ResourceType.PhysicsCollisionMesh;
-                case "Font":
-                    return ResourceType.BitmapFont;
-                case "RenderMesh":
-                    return ResourceType.Mesh;
-                case "ChoreoSceneFileData":
-                    return ResourceType.ChoreoSceneFileData;
-                case "Panorama":
-                    return input.String switch
-                    {
-                        "Panorama Style Compiler Version" => ResourceType.PanoramaStyle,
-                        "Panorama Script Compiler Version" => ResourceType.PanoramaScript,
-                        "Panorama Layout Compiler Version" => ResourceType.PanoramaLayout,
-                        "Panorama Dynamic Images Compiler Version" => ResourceType.PanoramaDynamicImages,
-                        _ => ResourceType.Panorama,
-                    };
-                case "VectorGraphic":
-                    return ResourceType.PanoramaVectorGraphic;
-                case "VCompMat":
-                    return ResourceType.CompositeMaterial;
-                case "VData":
-                    return ResourceType.VData;
-                case "ResponseRules":
-                    return ResourceType.ResponseRules;
-                case "DotaItem":
-                    return ResourceType.ArtifactItem;
-                case "CSGOItem":
-                    return ResourceType.CSGOItem;
-                case "CSGOEconItem":
-                    return ResourceType.CSGOEconItem;
-                case "PulseGraphDef":
-                    return ResourceType.PulseGraphDef;
-                case "SmartProp":
-                    return ResourceType.SmartProp;
-                case "GraphInstance":
-                    return ResourceType.ProcessingGraphInstance;
-                case "DotaHeroList":
-                    return ResourceType.DotaHeroList;
-                case "DotaPatchNotes":
-                    return ResourceType.DotaPatchNotes;
-                case "DotaVisualNovels":
-                    return ResourceType.DotaVisualNovels;
-                case "SBData":
-                case "ManagedResourceCompiler": // This is without the "Compile" prefix
-                    return ResourceType.SboxManagedResource;
+                "Animgraph" => ResourceType.AnimationGraph,
+                "AnimGroup" => ResourceType.AnimationGroup,
+                "ChoreoSceneFileData" => ResourceType.ChoreoSceneFileData,
+                "CSGOEconItem" => ResourceType.CSGOEconItem,
+                "CSGOItem" => ResourceType.CSGOItem,
+                "DotaHeroList" => ResourceType.DotaHeroList,
+                "DotaItem" => ResourceType.ArtifactItem,
+                "DotaPatchNotes" => ResourceType.DotaPatchNotes,
+                "DotaVisualNovels" => ResourceType.DotaVisualNovels,
+                "Font" => ResourceType.BitmapFont,
+                "GraphInstance" => ResourceType.ProcessingGraphInstance,
+                "NmClip" => ResourceType.NmClip,
+                "NmGraph" => ResourceType.NmGraph,
+                "NmGraphVariation" => ResourceType.NmGraphVariation,
+                "NmSkeleton" => ResourceType.NmSkeleton,
+                "Panorama" => input.String switch
+                {
+                    "Panorama Style Compiler Version" => ResourceType.PanoramaStyle,
+                    "Panorama Script Compiler Version" => ResourceType.PanoramaScript,
+                    "Panorama Layout Compiler Version" => ResourceType.PanoramaLayout,
+                    "Panorama Dynamic Images Compiler Version" => ResourceType.PanoramaDynamicImages,
+                    _ => ResourceType.Panorama,
+                },
+                "Psf" => ResourceType.ParticleSnapshot,
+                "PulseGraphDef" => ResourceType.PulseGraphDef,
+                "RenderMesh" => ResourceType.Mesh,
+                "ResponseRules" => ResourceType.ResponseRules,
+                "SBData" or "ManagedResourceCompiler" => ResourceType.SboxManagedResource,
+                "SmartProp" => ResourceType.SmartProp,
+                "VCompMat" => ResourceType.CompositeMaterial,
+                "VData" => ResourceType.VData,
+                "VectorGraphic" => ResourceType.PanoramaVectorGraphic,
+                "VPhysXData" => ResourceType.PhysicsCollisionMesh,
+                _ => ResourceType.Unknown,
+            };
+
+            if (resourceType == ResourceType.Unknown && Enum.TryParse(identifier, false, out ResourceType resourceTypeParsed))
+            {
+                return resourceTypeParsed;
             }
 
-            if (Enum.TryParse(identifier, false, out ResourceType resourceType))
-            {
-                return resourceType;
-            }
-
-            return ResourceType.Unknown;
+            return resourceType;
         }
     }
 }

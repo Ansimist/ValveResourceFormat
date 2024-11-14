@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Threading;
 using GUI.Utils;
 using OpenTK.Graphics.OpenGL;
 using SkiaSharp;
@@ -43,7 +44,6 @@ namespace GUI.Types.Renderer
 
         protected override void LoadScene()
         {
-            MainFramebuffer.ChangeFormat(new(PixelInternalFormat.Rgba8, PixelFormat.Rgba, PixelType.UnsignedInt), MainFramebuffer.DepthFormat);
         }
 
         private void LoadDefaultEnviromentMap()
@@ -76,7 +76,7 @@ namespace GUI.Types.Renderer
         }
 
         Vector2 defaultSunAngles = new(80f, 170f);
-        Vector4 defaultSunColor = new Vector4(255, 247, 235, 400) / 255.0f;
+        Vector4 defaultSunColor = new Vector4(255, 247, 235, 700) / 255.0f;
 
         readonly Camera previousCamera = new();
         Vector2 sunAngles;
@@ -124,7 +124,7 @@ namespace GUI.Types.Renderer
 
             if (SaveAsFbo == null)
             {
-                SaveAsFbo = Framebuffer.Prepare(w, h, 0, new(PixelInternalFormat.Rgba8, PixelFormat.Bgra, PixelType.UnsignedByte), MainFramebuffer.DepthFormat);
+                SaveAsFbo = Framebuffer.Prepare(w, h, 0, new(PixelInternalFormat.Rgba8, PixelFormat.Bgra, PixelType.UnsignedByte), null);
                 SaveAsFbo.ClearColor = new OpenTK.Graphics.Color4(0, 0, 0, 0);
                 SaveAsFbo.Initialize();
             }
@@ -133,8 +133,8 @@ namespace GUI.Types.Renderer
                 SaveAsFbo.Resize(w, h);
             }
 
-            SaveAsFbo.Clear();
-            GL.BlitNamedFramebuffer(MainFramebuffer.FboHandle, SaveAsFbo.FboHandle, 0, h, w, 0, 0, 0, w, h, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+            SaveAsFbo.BindAndClear();
+            FramebufferBlit(MainFramebuffer, SaveAsFbo, flipY: true);
 
             GL.Flush();
             GL.Finish();

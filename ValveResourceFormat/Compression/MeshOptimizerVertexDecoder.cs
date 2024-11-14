@@ -2,16 +2,20 @@
  * C# Port of https://github.com/zeux/meshoptimizer/blob/master/src/vertexcodec.cpp
  */
 using System.Buffers;
+using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace ValveResourceFormat.Compression
 {
-    public static class MeshOptimizerVertexDecoder
+    public static partial class MeshOptimizerVertexDecoder
     {
         private const byte VertexHeader = 0xa0;
 
         private const int VertexBlockSizeBytes = 8192;
         private const int VertexBlockMaxSize = 256;
         private const int ByteGroupSize = 16;
+        private const int ByteGroupDecodeLimit = 24;
         private const int TailMaxSize = 32;
 
         private static int GetVertexBlockSize(int vertexSize)
@@ -22,6 +26,7 @@ namespace ValveResourceFormat.Compression
             return result < VertexBlockMaxSize ? result : VertexBlockMaxSize;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static byte Unzigzag8(byte v)
         {
             return (byte)(-(v & 1) ^ (v >> 1));
@@ -33,6 +38,7 @@ namespace ValveResourceFormat.Compression
             byte b;
             byte enc;
 
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             byte Next(byte bits, byte encv)
             {
                 enc = b;
@@ -144,7 +150,7 @@ namespace ValveResourceFormat.Compression
 
             for (var i = 0; i < destination.Length; i += ByteGroupSize)
             {
-                if (data.Length < TailMaxSize)
+                if (data.Length < ByteGroupDecodeLimit)
                 {
                     throw new InvalidOperationException("Cannot decode");
                 }
@@ -166,6 +172,8 @@ namespace ValveResourceFormat.Compression
                 throw new ArgumentException("Expected vertexCount to be between 0 and VertexMaxBlockSize");
             }
 
+            var vertexCountAligned = (vertexCount + ByteGroupSize - 1) & ~(ByteGroupSize - 1);
+
             var bufferPool = ArrayPool<byte>.Shared.Rent(VertexBlockMaxSize);
             var buffer = bufferPool.AsSpan(0, VertexBlockMaxSize);
             var transposedPool = ArrayPool<byte>.Shared.Rent(VertexBlockSizeBytes);
@@ -173,8 +181,6 @@ namespace ValveResourceFormat.Compression
 
             try
             {
-                var vertexCountAligned = (vertexCount + ByteGroupSize - 1) & ~(ByteGroupSize - 1);
-
                 for (var k = 0; k < vertexSize; ++k)
                 {
                     data = DecodeBytes(data, buffer[..vertexCountAligned]);
@@ -207,7 +213,7 @@ namespace ValveResourceFormat.Compression
             return data;
         }
 
-        public static byte[] DecodeVertexBuffer(int vertexCount, int vertexSize, Span<byte> buffer)
+        public static byte[] DecodeVertexBuffer(int vertexCount, int vertexSize, Span<byte> buffer, bool useSimd = true)
         {
             if (vertexSize <= 0 || vertexSize > 256)
             {
@@ -238,25 +244,54 @@ namespace ValveResourceFormat.Compression
 
             buffer = buffer[1..];
 
-            var lastVertex = new byte[vertexSize];
-            buffer.Slice(buffer.Length - vertexSize, vertexSize).CopyTo(lastVertex);
-
-            var vertexBlockSize = GetVertexBlockSize(vertexSize);
-
-            var vertexOffset = 0;
-
             var resultArray = new byte[vertexCount * vertexSize];
-            var result = resultArray.AsSpan();
 
-            while (vertexOffset < vertexCount)
+            // C code always uses [256] here, but more than vertexSize can't be used
+            var lastVertexBuffer = ArrayPool<byte>.Shared.Rent(vertexSize);
+            var lastVertex = lastVertexBuffer.AsSpan(0, vertexSize);
+
+            try
             {
-                var blockSize = vertexOffset + vertexBlockSize < vertexCount
-                    ? vertexBlockSize
-                    : vertexCount - vertexOffset;
+                buffer.Slice(buffer.Length - vertexSize, vertexSize).CopyTo(lastVertex);
 
-                buffer = DecodeVertexBlock(buffer, result[(vertexOffset * vertexSize)..], blockSize, vertexSize, lastVertex);
+                var vertexBlockSize = GetVertexBlockSize(vertexSize);
 
-                vertexOffset += blockSize;
+                var vertexOffset = 0;
+
+                var result = resultArray.AsSpan();
+
+                useSimd &= IsHardwareAccelerated;
+
+                while (vertexOffset < vertexCount)
+                {
+                    var blockSize = vertexOffset + vertexBlockSize < vertexCount
+                        ? vertexBlockSize
+                        : vertexCount - vertexOffset;
+
+                    var vertexData = result[(vertexOffset * vertexSize)..];
+
+                    if (useSimd)
+                    {
+                        buffer = DecodeVertexBlockSimd(buffer, vertexData, blockSize, vertexSize, lastVertex);
+                    }
+                    else
+                    {
+                        buffer = DecodeVertexBlock(buffer, vertexData, blockSize, vertexSize, lastVertex);
+                    }
+
+                    vertexOffset += blockSize;
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(lastVertexBuffer);
+            }
+
+            var tailSize = vertexSize < TailMaxSize ? TailMaxSize : vertexSize;
+
+            if (buffer.Length != tailSize)
+            {
+                throw new ArgumentException("Tail size incorrect");
             }
 
             return resultArray;

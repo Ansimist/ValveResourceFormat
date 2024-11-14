@@ -30,7 +30,8 @@ namespace GUI.Forms
             }
 
             maxTextureSizeInput.Value = Settings.Config.MaxTextureSize;
-            fovInput.Value = Settings.Config.FieldOfView;
+            shadowResolutionInput.Value = Settings.Config.ShadowResolution;
+            fovInput.Value = (decimal)Settings.Config.FieldOfView;
             vsyncCheckBox.Checked = Settings.Config.Vsync != 0;
             displayFpsCheckBox.Checked = Settings.Config.DisplayFps != 0;
             openExplorerOnStartCheckbox.Checked = Settings.Config.OpenExplorerOnStart != 0;
@@ -125,32 +126,68 @@ namespace GUI.Forms
 
         private void OnMaxTextureSizeValueChanged(object sender, EventArgs e)
         {
+            if (!IsHandleCreated)
+            {
+                return;
+            }
+
             Settings.Config.MaxTextureSize = (int)maxTextureSizeInput.Value;
         }
 
         private void OnFovValueChanged(object sender, EventArgs e)
         {
-            Settings.Config.FieldOfView = (int)fovInput.Value;
+            if (!IsHandleCreated)
+            {
+                return;
+            }
+
+            Settings.Config.FieldOfView = (float)fovInput.Value;
+        }
+
+        private void OnSetFovTo4by3ButtonClick(object sender, EventArgs e)
+        {
+            Settings.Config.FieldOfView = 2f * MathF.Atan(3f / 4f) / MathF.PI * 180f;
+            fovInput.Value = (decimal)Settings.Config.FieldOfView;
         }
 
         private void OnAntiAliasingValueChanged(object sender, EventArgs e)
         {
+            if (!IsHandleCreated)
+            {
+                return;
+            }
+
             var newValue = AntiAliasingSampleOptions[antiAliasingComboBox.SelectedIndex];
             Settings.Config.AntiAliasingSamples = newValue;
         }
 
         private void OnVsyncValueChanged(object sender, EventArgs e)
         {
+            if (!IsHandleCreated)
+            {
+                return;
+            }
+
             Settings.Config.Vsync = vsyncCheckBox.Checked ? 1 : 0;
         }
 
         private void OnDisplayFpsValueChanged(object sender, EventArgs e)
         {
+            if (!IsHandleCreated)
+            {
+                return;
+            }
+
             Settings.Config.DisplayFps = displayFpsCheckBox.Checked ? 1 : 0;
         }
 
         private void OnOpenExplorerOnStartValueChanged(object sender, EventArgs e)
         {
+            if (!IsHandleCreated)
+            {
+                return;
+            }
+
             Settings.Config.OpenExplorerOnStart = openExplorerOnStartCheckbox.Checked ? 1 : 0;
         }
 
@@ -159,6 +196,11 @@ namespace GUI.Forms
 
         private void SetQuickPreviewSetting()
         {
+            if (!IsHandleCreated)
+            {
+                return;
+            }
+
             Settings.QuickPreviewFlags value = 0;
 
             if (quickPreviewCheckbox.Checked)
@@ -215,7 +257,10 @@ namespace GUI.Forms
             using var regProtocolOpen = regProtocol.CreateSubKey(@"shell\open\command");
             regProtocolOpen.SetValue(null, $"\"{applicationPath}\" \"%1\"");
 
-            NativeMethods.SHChangeNotify(NativeMethods.SHCNE_ASSOCCHANGED, NativeMethods.SHCNF_FLUSH, IntPtr.Zero, IntPtr.Zero);
+            unsafe
+            {
+                Windows.Win32.PInvoke.SHChangeNotify(Windows.Win32.UI.Shell.SHCNE_ID.SHCNE_ASSOCCHANGED, Windows.Win32.UI.Shell.SHCNF_FLAGS.SHCNF_FLUSH, null, null);
+            }
 
             MessageBox.Show(
                 $"Registered .vpk file association as well as \"vpk:\" protocol link handling.{Environment.NewLine}{Environment.NewLine}If you move {Path.GetFileName(applicationPath)}, you will have to register it again.",

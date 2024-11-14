@@ -35,9 +35,9 @@ class Framebuffer : IDisposable
     public ClearBufferMask ClearMask { get; set; } = ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit;
     #endregion
 
-    public void Clear()
+    public void BindAndClear(FramebufferTarget targetState = FramebufferTarget.Framebuffer)
     {
-        Bind(FramebufferTarget.Framebuffer);
+        Bind(targetState);
         GL.ClearColor(ClearColor);
         GL.Clear(ClearMask);
     }
@@ -195,15 +195,7 @@ class Framebuffer : IDisposable
         ColorFormat = colorFormat;
         DepthFormat = depthFormat;
 
-        if (Color != null)
-        {
-            ResizeAttachment(Color, colorFormat!, Width, Height);
-        }
-
-        if (Depth != null)
-        {
-            ResizeAttachment(Depth, depthFormat!, Width, Height);
-        }
+        Resize(Width, Height);
     }
 
     public void CheckStatus_ThrowIfIncomplete(string name = "")

@@ -73,13 +73,13 @@ public sealed class ShaderExtract
     public ShaderFile PixelShaderRenderState => Shaders.PixelShaderRenderState;
     public ShaderFile Raytracing => Shaders.Raytracing;
 
-    private IReadOnlyList<string> FeatureNames { get; set; }
-    private string[] Globals { get; set; }
-    private HashSet<string> VariantParameterNames { get; set; }
-    private HashSet<int> VariantParameterIndices { get; set; }
+    private readonly string[] FeatureNames;
+    private readonly string[] Globals;
+    private HashSet<string> VariantParameterNames;
+    private HashSet<int> VariantParameterIndices;
 
-    private ShaderExtractParams Options { get; set; }
-    private Dictionary<string, IndentedTextWriter> IncludeWriters { get; set; }
+    private ShaderExtractParams Options;
+    private Dictionary<string, IndentedTextWriter> IncludeWriters;
 
     public ShaderExtract(Resource resource)
         : this((SboxShader)(resource.GetBlockByType(BlockType.SPRV)
@@ -100,7 +100,7 @@ public sealed class ShaderExtract
             throw new InvalidOperationException("Shader extract cannot continue without at least a features file.");
         }
 
-        FeatureNames = Features.SfBlocks.Select(f => f.Name).ToList();
+        FeatureNames = Features.SfBlocks.Select(f => f.Name).ToArray();
         Globals = Features.ParamBlocks.Select(p => p.Name).ToArray();
     }
 
@@ -692,7 +692,7 @@ public sealed class ShaderExtract
 
     }
 
-    private void WriteVariantParameters(IReadOnlyList<SfBlock> sfBlocks, List<ParamBlock> paramBlocks, List<ChannelBlock> channelBlocks,
+    private void WriteVariantParameters(List<SfBlock> sfBlocks, List<ParamBlock> paramBlocks, List<ChannelBlock> channelBlocks,
         IndentedTextWriter writer, Dictionary<(int Index, int State), HashSet<int>> perConditionParameters)
     {
         var written = new HashSet<int>();
@@ -736,7 +736,7 @@ public sealed class ShaderExtract
         }
     }
 
-    private void WriteAttributes(IReadOnlyList<SfBlock> sfBlocks, IndentedTextWriter writer,
+    private void WriteAttributes(List<SfBlock> sfBlocks, IndentedTextWriter writer,
         Dictionary<int[], HashSet<string>> attributesDisect, Dictionary<(int Index, int State), HashSet<string>> perConditionAttributes)
     {
         var written = new HashSet<string>();
@@ -857,7 +857,7 @@ public sealed class ShaderExtract
         }
     }
 
-    private static bool IsIrrelevantCondition<T>(IReadOnlyList<SfBlock> sfBlocks, Dictionary<(int Index, int State),
+    private static bool IsIrrelevantCondition<T>(List<SfBlock> sfBlocks, Dictionary<(int Index, int State),
         HashSet<T>> perConditionStuff, (int Index, int State) condition, HashSet<T> stuff)
     {
         var rangeMin = sfBlocks[condition.Index].RangeMin;
@@ -879,7 +879,7 @@ public sealed class ShaderExtract
         return stateIsIrrelevant;
     }
 
-    private HashSet<string> GetZFrameAttributes(ZFrameFile zFrameFile, IReadOnlyList<ParamBlock> paramBlocks)
+    private HashSet<string> GetZFrameAttributes(ZFrameFile zFrameFile, List<ParamBlock> paramBlocks)
     {
         var attributes = new HashSet<string>();
         foreach (var attribute in zFrameFile.Attributes)
@@ -1337,7 +1337,7 @@ public sealed class ShaderExtract
             : string.Empty;
     }
 
-    private static string GetDynamicExpressionStringShared(byte[] bytecode, ParamBlock param, IndentedTextWriter writer, IReadOnlyList<string> features, IReadOnlyList<string> globals)
+    private static string GetDynamicExpressionStringShared(byte[] bytecode, ParamBlock param, IndentedTextWriter writer, string[] features, string[] globals)
     {
         var dynEx = new VfxEval(bytecode, globals, omitReturnStatement: true, features).DynamicExpressionResult;
         dynEx = dynEx.Replace(param.Name, "this", StringComparison.Ordinal);
@@ -1345,7 +1345,7 @@ public sealed class ShaderExtract
         return dynEx;
     }
 
-    private static string GetChannelFromChannelBlock(ChannelBlock channelBlock, IReadOnlyList<ParamBlock> paramBlocks)
+    private static string GetChannelFromChannelBlock(ChannelBlock channelBlock, List<ParamBlock> paramBlocks)
     {
         var mode = channelBlock.ColorMode == 0
             ? "Linear"

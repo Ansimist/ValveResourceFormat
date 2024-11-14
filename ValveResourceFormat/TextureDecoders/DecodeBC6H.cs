@@ -22,6 +22,9 @@ namespace ValveResourceFormat.TextureDecoders
             var rowBytes = bitmap.RowBytes;
             var offset = 0;
 
+            var endpoints = new ushort[4, 3];
+            var deltas = new short[3, 3];
+
             for (var j = 0; j < blockCountY; j++)
             {
                 for (var i = 0; i < blockCountX; i++)
@@ -42,9 +45,10 @@ namespace ValveResourceFormat.TextureDecoders
                         m = (byte)(block0 & 0x1F);
                     }
 
+                    Array.Clear(endpoints, 0, endpoints.Length);
+                    Array.Clear(deltas, 0, deltas.Length);
+
                     var epb = 0;
-                    var endpoints = new ushort[4, 3];
-                    var deltas = new short[3, 3];
                     byte pb = 0;
                     ulong ib = 0;
 
@@ -326,7 +330,7 @@ namespace ValveResourceFormat.TextureDecoders
                             {
                                 var factor = BPTCInterpolateFactor(cweight, endpoints[subset, e], endpoints[subset + 1, e]);
                                 //gamma correction and mul 4
-                                factor = (ushort)Math.Min(0xFFFF, Math.Pow(factor / (float)((1U << 16) - 1), 2.2f) * ((1U << 16) - 1) * 4);
+                                factor = (ushort)Math.Min(0xFFFF, MathF.Pow(factor / (float)((1U << 16) - 1), 2.2f) * ((1U << 16) - 1) * 4);
                                 data[pixelIndex + 2 - e] = (byte)(factor >> 8);
                             }
 

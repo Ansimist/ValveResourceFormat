@@ -1,3 +1,5 @@
+//#define DEBUG_ADD_KV_TYPE_COMMENTS
+
 using System.Collections;
 using System.Diagnostics;
 using System.Globalization;
@@ -27,6 +29,16 @@ namespace ValveResourceFormat.Serialization.KeyValues
             : this(name, capacity)
         {
             IsArray = isArray;
+        }
+
+
+        public KVObject(string name, IList<KVValue> arrayItems)
+            : this(name, true, arrayItems.Count)
+        {
+            foreach (var arrayItem in arrayItems)
+            {
+                AddProperty(null, arrayItem);
+            }
         }
 
         //Add a property to the structure
@@ -77,6 +89,10 @@ namespace ValveResourceFormat.Serialization.KeyValues
 
                 pair.Value.PrintValue(writer);
 
+#if DEBUG_ADD_KV_TYPE_COMMENTS
+                writer.Write($" // {pair.Value.Type}");
+#endif
+
                 writer.WriteLine();
             }
 
@@ -93,9 +109,14 @@ namespace ValveResourceFormat.Serialization.KeyValues
             // Need to preserve the order
             for (var i = 0; i < Count; i++)
             {
-                Properties[i.ToString(CultureInfo.InvariantCulture)].PrintValue(writer);
+                var value = Properties[i.ToString(CultureInfo.InvariantCulture)];
+                value.PrintValue(writer);
 
+#if DEBUG_ADD_KV_TYPE_COMMENTS
+                writer.WriteLine($", // {value.Type}");
+#else
                 writer.WriteLine(",");
+#endif
             }
 
             writer.Indent--;
@@ -174,16 +195,37 @@ namespace ValveResourceFormat.Serialization.KeyValues
 
         public bool ContainsKey(string name) => Properties.ContainsKey(name);
 
-        public T GetProperty<T>(string name)
+        public T GetProperty<T>(string name, T defaultValue = default)
         {
             if (Properties.TryGetValue(name, out var value))
             {
                 return (T)value.Value;
             }
-            else
+
+            return defaultValue;
+        }
+
+        public T GetPropertyUnchecked<T>(string name, T defaultValue = default)
+        {
+            if (Properties.TryGetValue(name, out var property))
             {
-                return default;
+                var valueObject = property.Value;
+
+                // We typicallly want to get a bool, int, uint, or float property,
+                // however it might be stored as string, which will raise FormatException.
+                // So here we try to convert the string to floating point number.
+                if (typeof(T) != typeof(string) && valueObject is string stringValue)
+                {
+                    if (float.TryParse(stringValue, CultureInfo.InvariantCulture, out var floatVal))
+                    {
+                        valueObject = floatVal;
+                    }
+                }
+
+                return (T)Convert.ChangeType(valueObject, typeof(T), CultureInfo.InvariantCulture);
             }
+
+            return defaultValue;
         }
 
         public T[] GetArray<T>(string name)
@@ -192,7 +234,7 @@ namespace ValveResourceFormat.Serialization.KeyValues
             {
                 if (value.Type == KVType.OBJECT && value.Value is KVObject kvObject && kvObject.IsArray)
                 {
-                    var properties = new List<T>();
+                    var properties = new List<T>(capacity: kvObject.Count);
                     var index = 0;
                     var property = kvObject.GetProperty<T>(index.ToString(CultureInfo.InvariantCulture));
                     while (!property.Equals(default(T)))

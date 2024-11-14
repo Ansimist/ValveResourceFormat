@@ -2,14 +2,14 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
-using Microsoft.Win32;
 using ValveKeyValue;
+using ValveResourceFormat.IO;
 
 namespace GUI.Utils
 {
     static class Settings
     {
-        private const int SettingsFileCurrentVersion = 8;
+        private const int SettingsFileCurrentVersion = 10;
         private const int RecentFilesLimit = 20;
 
         [Flags]
@@ -19,30 +19,41 @@ namespace GUI.Utils
             AutoPlaySounds = 1 << 1,
         }
 
+        public class AppUpdateState
+        {
+            public bool CheckAutomatically { get; set; }
+            public bool UpdateAvailable { get; set; }
+            public string LastCheck { get; set; }
+            public string Version { get; set; }
+        }
+
         public class AppConfig
         {
-            public List<string> GameSearchPaths { get; set; } = [];
+            public List<string> GameSearchPaths { get; set; }
             public string OpenDirectory { get; set; } = string.Empty;
             public string SaveDirectory { get; set; } = string.Empty;
-            public List<string> BookmarkedFiles { get; set; } = [];
-            public List<string> RecentFiles { get; set; } = new(RecentFilesLimit);
-            public Dictionary<string, float[]> SavedCameras { get; set; } = [];
+            public List<string> BookmarkedFiles { get; set; }
+            public List<string> RecentFiles { get; set; }
+            public Dictionary<string, float[]> SavedCameras { get; set; }
             public int MaxTextureSize { get; set; }
-            public int FieldOfView { get; set; }
+            public int ShadowResolution { get; set; }
+            public float FieldOfView { get; set; }
             public int AntiAliasingSamples { get; set; }
             public int WindowTop { get; set; }
             public int WindowLeft { get; set; }
             public int WindowWidth { get; set; }
             public int WindowHeight { get; set; }
-            public int WindowState { get; set; } = (int)FormWindowState.Normal;
+            public int WindowState { get; set; }
             public float Volume { get; set; }
             public int Vsync { get; set; }
             public int DisplayFps { get; set; }
             public int QuickFilePreview { get; set; }
             public int OpenExplorerOnStart { get; set; }
             public int _VERSION_DO_NOT_MODIFY { get; set; }
+            public AppUpdateState Update { get; set; }
         }
 
+        public static bool IsFirstStartup { get; private set; }
         public static string SettingsFolder { get; private set; }
         private static string SettingsFilePath;
 
@@ -115,13 +126,20 @@ namespace GUI.Utils
                 }
             }
 
+            Config.GameSearchPaths ??= [];
             Config.SavedCameras ??= [];
             Config.BookmarkedFiles ??= [];
             Config.RecentFiles ??= new(RecentFilesLimit);
+            Config.Update ??= new();
 
-            if (string.IsNullOrEmpty(Config.OpenDirectory) && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (string.IsNullOrEmpty(Config.OpenDirectory))
             {
-                Config.OpenDirectory = Path.Join(GetSteamPath(), "steamapps", "common");
+                var steamPath = Path.Join(GameFolderLocator.SteamPath, "steamapps", "common");
+
+                if (Directory.Exists(steamPath))
+                {
+                    Config.OpenDirectory = steamPath;
+                }
             }
 
             if (Config.MaxTextureSize <= 0)
@@ -131,6 +149,15 @@ namespace GUI.Utils
             else if (Config.MaxTextureSize > 10240)
             {
                 Config.MaxTextureSize = 10240;
+            }
+
+            if (Config.ShadowResolution <= 0)
+            {
+                Config.ShadowResolution = 2048;
+            }
+            else if (Config.ShadowResolution > 4096)
+            {
+                Config.ShadowResolution = 4096;
             }
 
             if (Config.FieldOfView <= 0)
@@ -170,9 +197,22 @@ namespace GUI.Utils
                 Config.OpenExplorerOnStart = 1;
             }
 
+            if (currentVersion < 10) // version 10: added startup window
+            {
+                IsFirstStartup = true;
+            }
+
             if (currentVersion > 0 && currentVersion != SettingsFileCurrentVersion)
             {
                 Log.Info(nameof(Settings), $"Settings version changed: {currentVersion} -> {SettingsFileCurrentVersion}");
+            }
+
+            // If the version changed, force an update check (if enabled)
+            if (Config.Update.Version != Application.ProductVersion)
+            {
+                Config.Update.Version = Application.ProductVersion;
+                Config.Update.UpdateAvailable = false;
+                Config.Update.LastCheck = string.Empty;
             }
 
             Config._VERSION_DO_NOT_MODIFY = SettingsFileCurrentVersion;
@@ -207,27 +247,6 @@ namespace GUI.Utils
         {
             Config.RecentFiles.Clear();
             Save();
-        }
-
-        public static string GetSteamPath()
-        {
-            try
-            {
-                using var key =
-                    Registry.CurrentUser.OpenSubKey("SOFTWARE\\Valve\\Steam") ??
-                    Registry.LocalMachine.OpenSubKey("SOFTWARE\\Valve\\Steam");
-
-                if (key?.GetValue("SteamPath") is string steamPath)
-                {
-                    return Path.GetFullPath(steamPath);
-                }
-            }
-            catch
-            {
-                // Don't care about registry exceptions
-            }
-
-            return string.Empty;
         }
     }
 }

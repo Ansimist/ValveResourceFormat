@@ -4,6 +4,7 @@ using System.Text;
 using ValveResourceFormat.Blocks;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization.KeyValues;
+using ValveResourceFormat.Utils;
 
 namespace ValveResourceFormat.Serialization
 {
@@ -13,7 +14,7 @@ namespace ValveResourceFormat.Serialization
             data switch
             {
                 BinaryKV3 kv => kv.Data,
-                ResourceTypes.NTRO ntro => ntro.Output,
+                NTRO ntro => ntro.Output,
                 _ => throw new InvalidOperationException($"Cannot use {data.GetType().Name} as key-value collection")
             };
     }
@@ -117,9 +118,10 @@ namespace ValveResourceFormat.Serialization
             if (normalize)
             {
                 var enumTypeName = typeof(TEnum).Name;
-                if (enumTypeName.EndsWith("Flags", StringComparison.Ordinal))
+                const string FlagsSuffix = "Flags";
+                if (enumTypeName.EndsWith(FlagsSuffix, StringComparison.Ordinal))
                 {
-                    enumTypeName = enumTypeName[..^5];
+                    enumTypeName = enumTypeName[..^FlagsSuffix.Length];
                 }
 
                 var sb = new StringBuilder(strValue.Length);
@@ -166,7 +168,7 @@ namespace ValveResourceFormat.Serialization
         }
 
         public static bool IsNotBlobType(this KVObject collection, string key)
-            => ((KVObject)collection).Properties[key].Type == KVType.ARRAY;
+            => collection.Properties[key].Type == KVType.ARRAY;
 
         public static Vector2 ToVector2(this KVObject collection) => new(
             collection.GetFloatProperty("0"),

@@ -116,7 +116,7 @@ namespace GUI.Types.PackageViewer
 
             TreeView.BeginUpdate();
 
-            var resourceEntries = new List<PackageEntry>();
+            var resourceEntries = new Queue<(string PathOnDisk, PackageEntry Entry)>();
 
             // TODO: This is not adding to the selected folder, but to root
             foreach (var file in files)
@@ -143,7 +143,7 @@ namespace GUI.Types.PackageViewer
 
                     if (Viewers.Resource.IsAccepted(magicResourceVersion) && name.EndsWith(GameFileLoader.CompiledFileSuffix, StringComparison.Ordinal))
                     {
-                        resourceEntries.Add(entry);
+                        resourceEntries.Enqueue((file, entry));
                     }
                 }
             }
@@ -159,6 +159,55 @@ namespace GUI.Types.PackageViewer
                 MessageBoxIcon.Question) == DialogResult.Yes)
             {
                 MessageBox.Show("TODO :)");
+
+#if DEBUG
+                while (resourceEntries.TryDequeue(out var entry))
+                {
+                    VrfGuiContext.CurrentPackage.ReadEntry(entry.Entry, out var output, false);
+                    using var entryStream = new MemoryStream(output);
+
+                    using var resource = new ValveResourceFormat.Resource();
+                    resource.Read(entryStream);
+
+                    if (resource.ExternalReferences is null)
+                    {
+                        continue;
+                    }
+
+                    // TODO: This doesn't work properly
+                    var folderDepth = entry.Entry.DirectoryName.Count(static c => c == Package.DirectorySeparatorChar);
+                    var folder = Path.GetDirectoryName(entry.PathOnDisk.AsSpan());
+
+                    while (folderDepth-- > 0)
+                    {
+                        folder = Path.GetDirectoryName(folder);
+                    }
+
+                    foreach (var reference in resource.ExternalReferences.ResourceRefInfoList)
+                    {
+                        if (reference.Name.StartsWith("_bakeresourcecache", StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        // Do not recurse maps (skyboxes)
+                        if (reference.Name.EndsWith(".vmap", StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        var file = Path.Combine(folder.ToString(), reference.Name);
+
+                        if (!File.Exists(file))
+                        {
+                            Log.Warn(nameof(PackageViewer), $"Faield to find file: {file}");
+                            continue;
+                        }
+                    }
+
+
+                }
+#endif
             }
         }
 
@@ -320,15 +369,8 @@ namespace GUI.Types.PackageViewer
                             // Use input dependency as the file name if there is one
                             if (resource.EditInfo != null)
                             {
-                                if (resource.EditInfo.Structs.TryGetValue(ResourceEditInfo.REDIStruct.InputDependencies, out var inputBlock))
-                                {
-                                    filepath = RecoverDeletedFilesGetPossiblePath((InputDependencies)inputBlock, resourceTypeExtensionWithDot);
-                                }
-
-                                if (filepath == null && resource.EditInfo.Structs.TryGetValue(ResourceEditInfo.REDIStruct.AdditionalInputDependencies, out inputBlock))
-                                {
-                                    filepath = RecoverDeletedFilesGetPossiblePath((InputDependencies)inputBlock, resourceTypeExtensionWithDot);
-                                }
+                                filepath = RecoverDeletedFilesGetPossiblePath(resource.EditInfo.InputDependencies, resourceTypeExtensionWithDot);
+                                filepath ??= RecoverDeletedFilesGetPossiblePath(resource.EditInfo.AdditionalInputDependencies, resourceTypeExtensionWithDot);
 
                                 // Fix panorama extension
                                 if (filepath != null && resourceTypeExtensionWithDot == ".vtxt")
@@ -422,14 +464,14 @@ namespace GUI.Types.PackageViewer
             return hiddenFiles;
         }
 
-        private static string RecoverDeletedFilesGetPossiblePath(InputDependencies inputDeps, string resourceTypeExtensionWithDot)
+        private static string RecoverDeletedFilesGetPossiblePath(List<InputDependency> inputDeps, string resourceTypeExtensionWithDot)
         {
-            if (inputDeps.List.Count == 0)
+            if (inputDeps.Count == 0)
             {
                 return null;
             }
 
-            foreach (var inputDependency in inputDeps.List)
+            foreach (var inputDependency in inputDeps)
             {
                 if (Path.GetExtension(inputDependency.ContentRelativeFilename) == resourceTypeExtensionWithDot)
                 {
@@ -449,7 +491,7 @@ namespace GUI.Types.PackageViewer
                     ".vts",
                 };
 
-                foreach (var inputDependency in inputDeps.List)
+                foreach (var inputDependency in inputDeps)
                 {
                     if (preferredExtensions.Contains(Path.GetExtension(inputDependency.ContentRelativeFilename)))
                     {
@@ -458,7 +500,7 @@ namespace GUI.Types.PackageViewer
                 }
             }
 
-            return inputDeps.List[0].ContentRelativeFilename;
+            return inputDeps[0].ContentRelativeFilename;
         }
 
         private void VPK_Disposed(object sender, EventArgs e)

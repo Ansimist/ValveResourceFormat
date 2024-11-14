@@ -7,6 +7,9 @@ charset = utf-8
 trim_trailing_whitespace = true
 insert_final_newline = true
 
+[*.yml]
+indent_size = 2
+
 [*.cs]
 tab_width = 4
 end_of_line = lf
@@ -101,11 +104,32 @@ dotnet_diagnostic.CA1308.severity = none
 # CA1852: Seal internal types
 dotnet_diagnostic.CA1852.severity = none
 
+# IDE0010: Add missing cases to switch statement
+dotnet_diagnostic.IDE0010.severity = none
+
+# IDE0045: Use conditional expression for assignment
+dotnet_diagnostic.IDE0045.severity = none
+
+# IDE0046: Use conditional expression for return
+dotnet_diagnostic.IDE0046.severity = none
+
+# IDE0058: Remove unnecessary expression value
+dotnet_diagnostic.IDE0058.severity = none
+
 # IDE0059: Remove unnecessary value assignment
 dotnet_diagnostic.IDE0059.severity = none
 
+# IDE0072: Add missing cases to switch statement
+dotnet_diagnostic.IDE0072.severity = none
+
 # IDE0079: Remove unnecessary suppression
 dotnet_diagnostic.IDE0079.severity = none
+
+# CA1515: Consider making public types internal
+dotnet_diagnostic.CA1515.severity = none
+
+# WFO1000: Properties of classes derived from `Control` should have `DesignerSerializationVisibilityAttribute`
+dotnet_diagnostic.WFO1000.severity = none
 
 #
 # Dotnet code style settings:
@@ -135,6 +159,9 @@ dotnet_style_explicit_tuple_names = true:suggestion
 
 # IDE0042: Deconstruct variable declaration
 csharp_style_deconstructed_variable_declaration = false:silent
+
+# IDE0130: Namespace does not match folder structure
+dotnet_style_namespace_match_folder = false:silent
 
 #
 # CSharp code style settings:
@@ -221,6 +248,7 @@ csharp_style_prefer_null_check_over_type_check = true:suggestion
 csharp_prefer_simple_default_expression = true:suggestion
 csharp_style_prefer_local_over_anonymous_function = true:suggestion
 csharp_style_prefer_tuple_swap = false:suggestion
+csharp_style_unused_value_expression_statement_preference = false:suggestion
 
 dotnet_naming_rule.interface_should_be_begins_with_i.severity = silent
 dotnet_naming_rule.types_should_be_pascal_case.severity = silent

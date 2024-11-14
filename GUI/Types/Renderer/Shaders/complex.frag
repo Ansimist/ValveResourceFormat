@@ -15,6 +15,7 @@
 #define renderMode_Tint 0
 #define renderMode_FoliageParams 0
 #define renderMode_TerrainBlend 0
+#define renderMode_LightmapShadows 0
 
 #if defined(vr_complex_vfx) || defined(csgo_complex_vfx)
     #define complex_vfx_common
@@ -128,13 +129,15 @@ uniform sampler2D g_tTintMask;
     #define csgo_generic_blend
 #endif
 
-#if (defined(simple_blend_common) || defined(csgo_generic_blend) || defined(vr_standard_blend_vfx))
-    #if !defined(steampal_2way_blend_mask_vfx)
+#if (defined(simple_blend_common) || defined(csgo_generic_blend) || defined(vr_standard_blend_vfx) || defined(environment_blend_vfx))
+    #if !defined(steampal_2way_blend_mask_vfx) // blending without vertex paint
         in vec4 vColorBlendValues;
     #endif
     uniform sampler2D g_tLayer2Color; // SrgbRead(true)
     uniform sampler2D g_tLayer2NormalRoughness;
     uniform vec4 g_vTexCoordScale2 = vec4(1.0);
+
+    #define terrain_blend_common
 #endif
 
 #if defined(vr_skin_vfx)
@@ -145,10 +148,10 @@ uniform sampler2D g_tTintMask;
 
 
 #define _uniformMetalness (defined(simple_vfx_common) || defined(complex_vfx_common)) && (F_METALNESS_TEXTURE == 0)
-#define _colorAlphaMetalness (defined(simple_vfx_common) || defined(complex_vfx_common)) && (F_METALNESS_TEXTURE == 1)
+#define _colorAlphaMetalness ((defined(simple_vfx_common) || defined(complex_vfx_common)) && (F_METALNESS_TEXTURE == 1) || defined(pbr_vfx))
 #define _colorAlphaAO (defined(vr_simple_vfx) && (F_AMBIENT_OCCLUSION_TEXTURE == 1) && (F_METALNESS_TEXTURE == 0)) || (defined(simple_blend_common) && (F_ENABLE_AMBIENT_OCCLUSION == 1))
 #define _metalnessTexture (defined(complex_vfx_common) && (F_METALNESS_TEXTURE == 1) && ((F_RETRO_REFLECTIVE == 1) || (F_ALPHA_TEST == 1) || (F_TRANSLUCENT == 1))) || defined(csgo_weapon_vfx) || defined(csgo_character_vfx) || defined(csgo_vertexlitgeneric_vfx)
-#define _ambientOcclusionTexture ( (defined(vr_simple_vfx) && (F_AMBIENT_OCCLUSION_TEXTURE == 1) && (F_METALNESS_TEXTURE == 1)) || defined(complex_vfx_common) || defined(csgo_foliage_vfx) || defined(csgo_weapon_vfx) || defined(csgo_character_vfx) || defined(csgo_generic_vfx_common))
+#define _ambientOcclusionTexture ((defined(vr_simple_vfx) && (F_AMBIENT_OCCLUSION_TEXTURE == 1) && (F_METALNESS_TEXTURE == 1)) || defined(complex_vfx_common) || defined(csgo_foliage_vfx) || defined(csgo_weapon_vfx) || defined(csgo_character_vfx) || defined(csgo_generic_vfx_common) || defined(pbr_vfx))
 
 #define unlit (defined(vr_unlit_vfx) || defined(unlit_vfx) || defined(csgo_unlitgeneric_vfx) || (F_FULLBRIGHT == 1) || (F_UNLIT == 1) || (defined(static_overlay_vfx_common) && F_LIT == 0)) || defined(csgo_decalmodulate_vfx)
 #define alphatest (F_ALPHA_TEST == 1) || ((defined(csgo_unlitgeneric_vfx) || defined(static_overlay_vfx_common)) && (F_BLEND_MODE == 2)) || defined(csgo_decalmodulate_vfx)
@@ -196,6 +199,26 @@ uniform sampler2D g_tTintMask;
 #if (F_FANCY_BLENDING > 0)
     uniform sampler2D g_tBlendModulation;
     uniform float g_flBlendSoftness;
+#endif
+
+
+#if defined(environment_blend_vfx)
+    #define g_tColor1 g_tColor
+    #define g_tNormalRoughness1 g_tNormal
+    uniform sampler2D g_tPacked1;
+
+    #define g_tColor2 g_tLayer2Color
+    #define g_tNormalRoughness2 g_tLayer2NormalRoughness
+    uniform sampler2D g_tPacked2;
+    uniform sampler2D g_tRevealMask2;
+    uniform float g_flRevealSoftness2;
+
+    // todo: layer 3
+    // todo: overlay
+
+    //uniform sampler2D g_tColorOverlay;
+    //uniform sampler2D g_tNormalRoughnessOverlay;
+    //uniform sampler2D g_tRevealOverlay;
 #endif
 
 #if defined(simple_blend_common)
@@ -282,7 +305,7 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
     vec4 normalTexture = texture(g_tNormal, texCoord);
 
     // Blending
-#if defined(csgo_generic_blend) || defined(simple_blend_common)  || defined(vr_standard_blend_vfx)
+#if defined(terrain_blend_common)
     vec2 texCoordB = texCoord * g_vTexCoordScale2.xy;
 
     #if defined(vr_standard_blend_vfx)
@@ -329,6 +352,10 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
         vec4 blendModTexel = texture(g_tLayer1RevealMask, texCoordB);
 
         blendFactor = ApplyBlendModulation(blendFactor, blendModTexel.g, blendModTexel.r * g_flLayer1BlendSoftness);
+    #elif defined(environment_blend_vfx)
+        float blendFactor = vColorBlendValues.r;
+        float revealMask = texture(g_tRevealMask2, texCoordB).r;
+        blendFactor = ApplyBlendModulation(blendFactor, revealMask, g_flRevealSoftness2);
     #else
         float blendFactor = vColorBlendValues.r;
     #endif
@@ -347,6 +374,15 @@ MaterialProperties_t GetMaterial(vec2 texCoord, vec3 vertexNormals)
     color = mix(color, color2, blendFactor);
     // It's more correct to blend normals after decoding, but it's not actually how S2 does it
     normalTexture = mix(normalTexture, normalTexture2, blendFactor);
+
+    #if defined(environment_blend_vfx)
+        vec3 packed1 = texture(g_tPacked1, texCoord).rgb;
+        vec3 packed2 = texture(g_tPacked2, texCoord).rgb;
+        vec3 packedBlended = mix(packed1, packed2, blendFactor);
+        mat.AmbientOcclusion = packedBlended.r;
+        mat.Metalness = packedBlended.g;
+        mat.Height = packedBlended.b;
+    #endif
 #endif
 
     float flSelfIllumMask = 0.0;
@@ -638,8 +674,8 @@ void main()
 
     ApplyFog(outputColor.rgb, mat.PositionWS);
 
-#if (F_DISABLE_TONE_MAPPING == 0)
-    outputColor.rgb = SrgbLinearToGamma(outputColor.rgb);
+#if (F_DISABLE_TONE_MAPPING == 1)
+    outputColor.rgb = SrgbGammaToLinear(outputColor.rgb);
 #endif
 
 #if (blendMod2x)
@@ -654,42 +690,51 @@ void main()
     {
         // No bumpmaps, full reflectivity
         vec3 viewmodeEnvMap = GetEnvironment(mat).rgb;
-        outputColor.rgb = SrgbLinearToGamma(viewmodeEnvMap);
+        outputColor.rgb = viewmodeEnvMap;
     }
     else if (g_iRenderMode == renderMode_Illumination)
     {
-        outputColor = vec4(SrgbLinearToGamma(lighting.DiffuseDirect + lighting.SpecularDirect), 1.0);
+        outputColor = vec4(lighting.DiffuseDirect + lighting.SpecularDirect, 1.0);
     }
+#if (D_BAKED_LIGHTING_FROM_LIGHTMAP == 1)
+    else if (g_iRenderMode == renderMode_LightmapShadows)
+    {
+        #if (LightmapGameVersionNumber >= 2)
+            vec4 dlsh = texture(g_tDirectLightShadows, vLightmapUVScaled);
+            outputColor = vec4(vec3(1.0 - dlsh.x) + vec3(1.0 - min3(dlsh.yzw)) * vec3(0.5, 0.5, 0), 1.0);
+        #endif
+    }
+#endif
     else if (g_iRenderMode == renderMode_Tint)
     {
-        outputColor = vVertexColorOut;
+        outputColor = vec4(SrgbGammaToLinear(vVertexColorOut.rgb), vVertexColorOut.a);
     }
 #if (F_GLASS == 0)
     else if (g_iRenderMode == renderMode_Irradiance)
     {
-        outputColor = vec4(SrgbLinearToGamma(lighting.DiffuseIndirect), 1.0);
+        outputColor = vec4(lighting.DiffuseIndirect, 1.0);
     }
 #endif
 #if defined(foliage_vfx_common)
     else if (g_iRenderMode == renderMode_FoliageParams)
     {
-        outputColor.rgb = vFoliageParamsOut.rgb;
+        outputColor.rgb = SrgbGammaToLinear(vFoliageParamsOut.rgb);
     }
 #endif
-#if !defined(steampal_2way_blend_mask_vfx) && (defined(csgo_generic_blend) || defined(simple_blend_common) || defined(vr_standard_blend_vfx))
+#if defined(terrain_blend_common) && !defined(steampal_2way_blend_mask_vfx)
     else if (g_iRenderMode == renderMode_TerrainBlend)
     {
-        outputColor.rgb = vColorBlendValues.rgb;
+        outputColor.rgb = SrgbGammaToLinear(vColorBlendValues.rgb);
     }
 #endif
 #if !(unlit)
     else if (g_iRenderMode == renderMode_Diffuse)
     {
-        outputColor.rgb = SrgbLinearToGamma(diffuseLighting * 0.5);
+        outputColor.rgb = diffuseLighting * 0.5;
     }
     else if (g_iRenderMode == renderMode_Specular)
     {
-        outputColor.rgb = SrgbLinearToGamma(specularLighting);
+        outputColor.rgb = specularLighting;
     }
 #endif
 }

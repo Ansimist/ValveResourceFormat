@@ -9,6 +9,7 @@ using OpenTK.Graphics.OpenGL;
 using SkiaSharp;
 using ValveResourceFormat;
 using ValveResourceFormat.CompiledShader;
+using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.TextureDecoders;
 using ValveResourceFormat.Utils;
 using static ValveResourceFormat.ResourceTypes.Texture;
@@ -52,7 +53,7 @@ class GLTextureDecoder : IHardwareTextureDecoder, IDisposable
     private readonly VrfGuiContext guiContext = new();
     private readonly AutoResetEvent queueUpdateEvent = new(false);
     private readonly ConcurrentQueue<DecodeRequest> decodeQueue = new();
-    private readonly object threadStartupLock = new();
+    private readonly Lock threadStartupLock = new();
 
     private Thread GLThread;
     private bool IsRunning;
@@ -133,8 +134,7 @@ class GLTextureDecoder : IHardwareTextureDecoder, IDisposable
 
         GLViewerControl.CheckOpenGL();
 
-        GL.GetInternalformat(ImageTarget.Texture2D, SizedInternalFormat.Rgba8, InternalFormatParameter.InternalformatPreferred, 1, out int internalFormatPreferred);
-        Framebuffer = Framebuffer.Prepare(4, 4, 0, new((PixelInternalFormat)internalFormatPreferred, PixelFormat.Bgra, PixelType.UnsignedByte), null);
+        Framebuffer = Framebuffer.Prepare(4, 4, 0, LDRFormat.Value, null);
         Framebuffer.Initialize();
         Framebuffer.CheckStatus_ThrowIfIncomplete(nameof(GLTextureDecoder));
         Framebuffer.ClearMask = ClearBufferMask.ColorBufferBit;
@@ -179,13 +179,31 @@ class GLTextureDecoder : IHardwareTextureDecoder, IDisposable
         }
         */
 
+        var framebufferFormat = request.Bitmap.ColorType switch
+        {
+            SKColorType.RgbaF32 => HDRFormat.Value,
+            SKColorType.Bgra8888 => LDRFormat.Value,
+            _ => null,
+        };
+
+        if (framebufferFormat == null)
+        {
+            Log.Warn(nameof(GLTextureDecoder), $"Unsupported bitmap output type: {request.Bitmap.ColorType}");
+            return false;
+        }
+
+        if (Framebuffer.ColorFormat != framebufferFormat)
+        {
+            Framebuffer.ChangeFormat(framebufferFormat, null);
+        }
+
         if (Framebuffer.Width < inputTexture.Width || Framebuffer.Height < inputTexture.Height)
         {
             Framebuffer.Resize(inputTexture.Width, inputTexture.Height);
         }
 
         GL.Viewport(0, 0, inputTexture.Width, inputTexture.Height);
-        Framebuffer.Clear();
+        Framebuffer.BindAndClear();
         GL.DepthMask(false);
         GL.Disable(EnableCap.DepthTest);
 
@@ -214,19 +232,20 @@ class GLTextureDecoder : IHardwareTextureDecoder, IDisposable
         inputTexture.Dispose();
         GL.UseProgram(0);
 
-        var pixels = request.Bitmap.GetPixels(out var length);
+        var pixels = request.Bitmap.GetPixels(out var outputLength);
+        var fbBytesPerPixel = Framebuffer.ColorFormat.PixelType == PixelType.Float ? 16 : 4;
+        var fbRegionLength = request.Bitmap.Width * request.Bitmap.Height * fbBytesPerPixel;
 
-        Debug.Assert(request.Bitmap.ColorType == SKColorType.Bgra8888);
-
-        if (length > inputTexture.Width * inputTexture.Height * 4)
+        if (fbRegionLength > outputLength)
         {
+            Log.Warn(nameof(GLTextureDecoder), $"Bitmap is too small to copy framebuffer contents to.");
             return false;
         }
 
         // extract pixels from framebuffer
         GL.Flush();
         GL.Finish();
-        GL.ReadPixels(0, 0, request.Bitmap.Width, request.Bitmap.Height, PixelFormat.Bgra, PixelType.UnsignedByte, pixels);
+        GL.ReadPixels(0, 0, request.Bitmap.Width, request.Bitmap.Height, Framebuffer.ColorFormat.PixelFormat, Framebuffer.ColorFormat.PixelType, pixels);
 
         request.DecodeTime = sw.Elapsed;
         return true;
@@ -262,6 +281,23 @@ class GLTextureDecoder : IHardwareTextureDecoder, IDisposable
         queueUpdateEvent.Dispose();
         guiContext.Dispose();
         Log.Info(nameof(GLTextureDecoder), "Decoder has been disposed.");
+    }
+
+    public static (SizedInternalFormat SizedInternalFormat, PixelFormat PixelFormat, PixelType PixelType) GetImageExportFormat(bool hdr) => hdr switch
+    {
+        false => (SizedInternalFormat.Rgba8, PixelFormat.Bgra, PixelType.UnsignedByte),
+        true => (SizedInternalFormat.Rgba32f, PixelFormat.Rgba, PixelType.Float),
+    };
+
+    public Lazy<Framebuffer.AttachmentFormat> LDRFormat { get; } = new(() => GetPreferredFramebufferFormat(hdr: false));
+    public Lazy<Framebuffer.AttachmentFormat> HDRFormat { get; } = new(() => GetPreferredFramebufferFormat(hdr: true));
+
+    public static Framebuffer.AttachmentFormat GetPreferredFramebufferFormat(bool hdr)
+    {
+        var (internalFormat, pixelFormat, pixelType) = GetImageExportFormat(hdr);
+
+        GL.GetInternalformat(ImageTarget.Texture2D, internalFormat, InternalFormatParameter.InternalformatPreferred, 1, out int internalFormatPreferred);
+        return new((PixelInternalFormat)internalFormatPreferred, pixelFormat, pixelType);
     }
 
     public static string GetTextureTypeDefine(TextureTarget target) => target switch

@@ -12,10 +12,10 @@ using System.Threading.Tasks;
 using ConsoleAppFramework;
 using SteamDatabase.ValvePak;
 using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
 using ValveResourceFormat.CompiledShader;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.TextureDecoders;
 using ValveResourceFormat.ToolsAssetInfo;
 using ValveResourceFormat.Utils;
 
@@ -25,9 +25,10 @@ namespace Decompiler
     {
         private readonly Dictionary<string, ResourceStat> stats = [];
         private readonly Dictionary<string, string> uniqueSpecialDependancies = [];
-        private readonly HashSet<uint> unknownEntityKeys = [];
+        private readonly HashSet<string> unknownEntityKeys = [];
+        private HashSet<string> knownEntityKeys;
 
-        private readonly object ConsoleWriterLock = new();
+        private readonly Lock ConsoleWriterLock = new();
         private int CurrentFile;
         private int TotalFiles;
 
@@ -38,14 +39,18 @@ namespace Decompiler
         private bool RecursiveSearchArchives;
         private bool PrintAllBlocks;
         private string BlockToPrint;
+        private bool ShouldPrintBlockContents => PrintAllBlocks || !string.IsNullOrEmpty(BlockToPrint);
         private int MaxParallelismThreads;
         private bool OutputVPKDir;
         private bool VerifyVPKChecksums;
         private bool CachedManifest;
         private bool Decompile;
-        private string FileFilter;
+        private TextureCodec TextureDecodeFlags;
+        private string[] FileFilter;
         private bool ListResources;
         private string GltfExportFormat;
+        private bool GltfExportAnimations;
+        private string[] GltfAnimationFilter;
         private bool GltfExportMaterials;
         private bool GltfExportAdaptTextures;
         private bool GltfExportExtras;
@@ -82,6 +87,8 @@ namespace Decompiler
         /// </summary>
         /// <param name="input">-i, Input file to be processed. With no additional arguments, a summary of the input(s) will be displayed.</param>
         /// <param name="output">-o, Output path to write to. If input is a folder (or a VPK), this should be a folder.</param>
+        /// <param name="decompile">-d|--vpk_decompile, Decompile supported resource files.</param>
+        /// <param name="texture_decode_flags">Decompile textures with the specified decode flags, example: "none", "auto", "foceldr".</param>
         /// <param name="recursive">If specified and given input is a folder, all sub directories will be scanned too.</param>
         /// <param name="recursive_vpk">If specified along with --recursive, will also recurse into VPK archives.</param>
         /// <param name="all">-a, Print the content of each resource block in the file.</param>
@@ -90,11 +97,12 @@ namespace Decompiler
         /// <param name="vpk_dir">Print a list of files in given VPK and information about them.</param>
         /// <param name="vpk_verify">Verify checksums and signatures.</param>
         /// <param name="vpk_cache">Use cached VPK manifest to keep track of updates. Only changed files will be written to disk.</param>
-        /// <param name="vpk_decompile">-d, Decompile supported resource files.</param>
         /// <param name="vpk_extensions">-e, File extension(s) filter, example: "vcss_c,vjs_c,vxml_c".</param>
-        /// <param name="vpk_filepath">-f, File path filter, example: "panorama\\\\" or "scripts/items/items_game.txt".</param>
+        /// <param name="vpk_filepath">-f, File path filter, example: "panorama/,sounds/" or "scripts/items/items_game.txt".</param>
         /// <param name="vpk_list">-l, Lists all resources in given VPK. File extension and path filters apply.</param>
         /// <param name="gltf_export_format">Exports meshes/models in given glTF format. Must be either "gltf" or "glb".</param>
+        /// <param name="gltf_export_animations">Whether to export model animations during glTF exports.</param>
+        /// <param name="gltf_animation_list">Animations to include in the glTF, example "idle,dropped". By default will include all animations.</param>
         /// <param name="gltf_export_materials">Whether to export materials during glTF exports.</param>
         /// <param name="gltf_textures_adapt">Whether to perform any glTF spec adaptations on textures (e.g. split metallic map).</param>
         /// <param name="gltf_export_extras">Export additional Mesh properties into glTF extras</param>
@@ -109,6 +117,8 @@ namespace Decompiler
         private int HandleArguments(
             string input,
             string output = default,
+            bool decompile = false,
+            string texture_decode_flags = nameof(TextureCodec.Auto),
             bool recursive = false,
             bool recursive_vpk = false,
             bool all = false,
@@ -117,12 +127,13 @@ namespace Decompiler
             bool vpk_dir = false,
             bool vpk_verify = false,
             bool vpk_cache = false,
-            bool vpk_decompile = false,
             string vpk_extensions = default,
             string vpk_filepath = default,
             bool vpk_list = false,
 
             string gltf_export_format = "gltf",
+            bool gltf_export_animations = false,
+            string gltf_animation_list = default,
             bool gltf_export_materials = false,
             bool gltf_textures_adapt = false,
             bool gltf_export_extras = false,
@@ -139,6 +150,8 @@ namespace Decompiler
         {
             InputFile = Path.GetFullPath(input);
             OutputFile = output;
+            Decompile = decompile;
+            TextureDecodeFlags = Enum.Parse<TextureCodec>(texture_decode_flags, true);
             RecursiveSearch = recursive;
             RecursiveSearchArchives = recursive_vpk;
             PrintAllBlocks = all;
@@ -147,12 +160,13 @@ namespace Decompiler
             OutputVPKDir = vpk_dir;
             VerifyVPKChecksums = vpk_verify;
             CachedManifest = vpk_cache;
-            Decompile = vpk_decompile;
-            FileFilter = vpk_filepath;
+            FileFilter = vpk_filepath?.Split(',') ?? [];
             ListResources = vpk_list;
 
             GltfExportFormat = gltf_export_format;
             GltfExportMaterials = gltf_export_materials;
+            GltfExportAnimations = gltf_export_animations;
+            GltfAnimationFilter = gltf_animation_list?.Split(',') ?? [];
             GltfExportAdaptTextures = gltf_textures_adapt;
             GltfExportExtras = gltf_export_extras;
             ToolsAssetInfoShort = tools_asset_info_short;
@@ -171,9 +185,9 @@ namespace Decompiler
                 OutputFile = FixPathSlashes(OutputFile);
             }
 
-            if (FileFilter != null)
+            for (var i = 0; i < FileFilter.Length; i++)
             {
-                FileFilter = FixPathSlashes(FileFilter);
+                FileFilter[i] = FixPathSlashes(FileFilter[i]);
             }
 
             if (vpk_extensions != null)
@@ -184,14 +198,18 @@ namespace Decompiler
             if (GltfExportFormat != "gltf" && GltfExportFormat != "glb")
             {
                 Console.Error.WriteLine("glTF export format must be either 'gltf' or 'glb'.");
+                return 1;
+            }
 
+            if (!GltfExportAnimations && GltfAnimationFilter.Length > 0)
+            {
+                Console.Error.WriteLine("glTF animation filter is only valid when exporting animations.");
                 return 1;
             }
 
             if (CollectStats && OutputFile != null)
             {
                 Console.Error.WriteLine("Do not use --stats with --output.");
-
                 return 1;
             }
 
@@ -388,7 +406,11 @@ namespace Decompiler
             {
                 CurrentFile++;
 
-                if (CollectStats && RecursiveSearch)
+                if (ListResources)
+                {
+                    // do not print a header
+                }
+                else if (CollectStats && RecursiveSearch)
                 {
                     if (CurrentFile % 1000 == 0)
                     {
@@ -423,7 +445,7 @@ namespace Decompiler
 
             if (stream.Length >= magicData.Length)
             {
-                stream.Read(magicData);
+                stream.ReadExactly(magicData);
                 stream.Seek(-magicData.Length, SeekOrigin.Current);
             }
 
@@ -506,7 +528,8 @@ namespace Decompiler
                 if (OutputFile != null)
                 {
                     using var fileLoader = new GameFileLoader(null, resource.FileName);
-                    using var contentFile = FileExtract.Extract(resource, fileLoader);
+
+                    using var contentFile = DecompileResource(resource, fileLoader);
 
                     path = Path.ChangeExtension(path, extension);
                     var outFilePath = GetOutputPath(path);
@@ -571,11 +594,6 @@ namespace Decompiler
 
             Console.WriteLine(Environment.NewLine);
 
-            // TODO: Resource Deferred Refs:
-            Console.WriteLine("--- (No Deferred Resource References Found)");
-
-            Console.WriteLine(Environment.NewLine);
-
             Console.WriteLine("--- Resource Blocks: Count {0} ---", resource.Blocks.Count);
 
             foreach (var block in resource.Blocks)
@@ -583,7 +601,7 @@ namespace Decompiler
                 Console.WriteLine("\t-- Block: {0,-4}  Size: {1,-6} bytes [Offset: {2,6}]", block.Type, block.Size, block.Offset);
             }
 
-            if (PrintAllBlocks || !string.IsNullOrEmpty(BlockToPrint))
+            if (ShouldPrintBlockContents)
             {
                 Console.WriteLine(Environment.NewLine);
 
@@ -598,6 +616,18 @@ namespace Decompiler
                     Console.WriteLine(block.ToString());
                 }
             }
+        }
+
+        private ContentFile DecompileResource(Resource resource, IFileLoader fileLoader, IProgress<string> progressReporter = null)
+        {
+            return resource.ResourceType switch
+            {
+                ResourceType.Texture => new TextureExtract(resource)
+                {
+                    DecodeFlags = TextureDecodeFlags,
+                }.ToContentFile(),
+                _ => FileExtract.Extract(resource, fileLoader, progressReporter),
+            };
         }
 
         private void ParseVCS(string path, Stream stream, string originalPath)
@@ -728,11 +758,6 @@ namespace Decompiler
 
             if (OutputFile == null)
             {
-                if (!CollectStats)
-                {
-                    Console.WriteLine("--- Files in package:");
-                }
-
                 var orderedEntries = package.Entries.OrderByDescending(x => x.Value.Count).ThenBy(x => x.Key).ToList();
 
                 if (ExtFilterList != null)
@@ -754,33 +779,33 @@ namespace Decompiler
 
                 if (ListResources)
                 {
-                    var listEntries = orderedEntries.SelectMany(x => x.Value);
-                    foreach (var entry in listEntries)
+                    var listEntries = orderedEntries.SelectMany(x => x.Value).ToList();
+                    listEntries.Sort((a, b) => string.CompareOrdinal(a.GetFullPath(), b.GetFullPath()));
+
+                    foreach (var (entry, _) in FilteredEntries(listEntries))
                     {
-                        var filePath = FixPathSlashes(entry.GetFullPath());
-                        if (FileFilter != null && !filePath.StartsWith(FileFilter, StringComparison.Ordinal))
-                        {
-                            continue;
-                        }
-                        Console.WriteLine("\t{0}", filePath);
+                        Console.WriteLine($"{entry.GetFullPath()} CRC:{entry.CRC32:x10} size:{entry.TotalLength}");
                     }
+
                     return;
                 }
 
-                if (CollectStats)
+                if (!CollectStats)
+                {
+                    Console.WriteLine("--- Files in package:");
+                }
+
+                var processVpkFiles = CollectStats || ShouldPrintBlockContents;
+
+                if (processVpkFiles)
                 {
                     var queue = new ConcurrentQueue<PackageEntry>();
 
-                    foreach (var entry in orderedEntries)
+                    foreach (var entryGroup in orderedEntries)
                     {
-                        foreach (var file in entry.Value)
+                        foreach (var (entry, _) in FilteredEntries(entryGroup.Value))
                         {
-                            if (FileFilter != null && !FixPathSlashes(file.GetFullPath()).StartsWith(FileFilter, StringComparison.Ordinal))
-                            {
-                                continue;
-                            }
-
-                            queue.Enqueue(file);
+                            queue.Enqueue(entry);
                         }
                     }
 
@@ -848,9 +873,11 @@ namespace Decompiler
                     file.Close();
                 }
 
+                using var fileLoader = new GameFileLoader(package, package.FileName);
+
                 foreach (var type in package.Entries)
                 {
-                    DumpVPK(path, package, type.Key, manifestData);
+                    ProcessVPKEntries(path, package, fileLoader, type.Key, manifestData);
                 }
 
                 if (CachedManifest)
@@ -923,7 +950,8 @@ namespace Decompiler
             Console.WriteLine("Success.");
         }
 
-        private void DumpVPK(string parentPath, Package package, string type, Dictionary<string, uint> manifestData)
+        private void ProcessVPKEntries(string parentPath, Package package,
+            IFileLoader fileLoader, string type, Dictionary<string, uint> manifestData)
         {
             var allowSubFilesFromExternalRefs = true;
             if (ExtFilterList != null)
@@ -946,25 +974,21 @@ namespace Decompiler
                 return;
             }
 
-            using var fileLoader = new GameFileLoader(package, package.FileName);
             var progressReporter = new Progress<string>(progress => Console.WriteLine($"--- {progress}"));
             var gltfModelExporter = new GltfModelExporter(fileLoader)
             {
+                ExportAnimations = GltfExportAnimations,
                 ExportMaterials = GltfExportMaterials,
                 AdaptTextures = GltfExportAdaptTextures,
                 ExportExtras = GltfExportExtras,
                 ProgressReporter = progressReporter,
             };
 
-            foreach (var file in entries)
+            gltfModelExporter.AnimationFilter.UnionWith(GltfAnimationFilter);
+
+            foreach (var (file, filePath) in FilteredEntries(entries))
             {
                 var extension = type;
-                var filePath = FixPathSlashes(file.GetFullPath());
-
-                if (FileFilter != null && !filePath.StartsWith(FileFilter, StringComparison.Ordinal))
-                {
-                    continue;
-                }
 
                 if (OutputFile != null && CachedManifest)
                 {
@@ -1028,7 +1052,7 @@ namespace Decompiler
                         continue;
                     }
 
-                    using var contentFile = FileExtract.Extract(resource, fileLoader, progressReporter);
+                    using var contentFile = DecompileResource(resource, fileLoader, progressReporter);
 
                     if (OutputFile != null)
                     {
@@ -1083,6 +1107,26 @@ namespace Decompiler
             File.WriteAllBytes(path, data.ToArray());
 
             Console.WriteLine("--- Dump written to \"{0}\"", path);
+        }
+
+        private IEnumerable<(PackageEntry Entry, string FilePath)> FilteredEntries(IEnumerable<PackageEntry> entries)
+        {
+            foreach (var entry in entries)
+            {
+                var filePath = FixPathSlashes(entry.GetFullPath());
+
+                if (IsExcludedVpkFilePath(filePath))
+                {
+                    continue;
+                }
+
+                yield return (entry, filePath);
+            }
+        }
+
+        private bool IsExcludedVpkFilePath(string filePath)
+        {
+            return FileFilter.Length > 0 && FileFilter.All(filter => !filePath.StartsWith(filter, StringComparison.Ordinal));
         }
 
         private string GetOutputPath(string inputPath, bool useOutputAsDirectory = false)
@@ -1157,17 +1201,17 @@ namespace Decompiler
                     {
                         var entityLump = (EntityLump)resource.DataBlock;
                         var entities = entityLump.GetEntities();
-                        var knownKeys = StringToken.InvertedTable;
+                        knownEntityKeys ??= [.. EntityLumpKnownKeys.KnownKeys];
 
                         foreach (var entity in entities)
                         {
                             foreach (var property in entity.Properties)
                             {
-                                if (!knownKeys.ContainsKey(property.Key))
+                                if (!knownEntityKeys.Contains(property.Key))
                                 {
                                     lock (unknownEntityKeys)
                                     {
-                                        unknownEntityKeys.Add(property.Key);
+                                        unknownEntityKeys.Add(property.Key.Remove(0, "vrf_unknown_key_".Length));
                                     }
                                 }
                             }
@@ -1238,11 +1282,11 @@ namespace Decompiler
 
             AddStat(info);
 
-            if (resource.EditInfo != null && resource.EditInfo.Structs.TryGetValue(ResourceEditInfo.REDIStruct.SpecialDependencies, out var specialDepsRedi))
+            if (resource.EditInfo != null)
             {
                 lock (uniqueSpecialDependancies)
                 {
-                    foreach (var dep in ((ValveResourceFormat.Blocks.ResourceEditInfoStructs.SpecialDependencies)specialDepsRedi).List)
+                    foreach (var dep in resource.EditInfo.SpecialDependencies)
                     {
                         uniqueSpecialDependancies[$"{dep.CompilerIdentifier} \"{dep.String}\""] = path;
                     }

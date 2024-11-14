@@ -1,11 +1,12 @@
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using SkiaSharp;
+using TinyEXR;
 using ValveResourceFormat.IO.ContentFormats.ValveTexture;
 using ValveResourceFormat.ResourceTypes;
 using ChannelMapping = ValveResourceFormat.CompiledShader.ChannelMapping;
-
 namespace ValveResourceFormat.IO;
 
 public class TextureContentFile : ContentFile
@@ -60,10 +61,22 @@ public sealed class TextureExtract
     private readonly bool isCubeMap;
     private readonly bool isArray;
 
+    // Options
+    public TextureDecoders.TextureCodec DecodeFlags { get; set; } = TextureDecoders.TextureCodec.Auto;
+
+    /// <summary>
+    /// Should the vtex file be ignored. Defaults to true for files flagged as child resources.
+    /// </summary>
+    public bool IgnoreVtexFile { get; set; }
+
+    public bool ExportExr => texture.IsHighDynamicRange && !DecodeFlags.HasFlag(TextureDecoders.TextureCodec.ForceLDR);
+    public string ImageOutputExtension => ExportExr ? ".exr" : ".png";
+
     public TextureExtract(Resource resource)
     {
         texture = (Texture)resource.DataBlock;
         fileName = resource.FileName;
+        IgnoreVtexFile = FileExtract.IsChildResource(resource);
         isSpriteSheet = texture.ExtraData.ContainsKey(VTexExtraData.SHEET);
         isCubeMap = texture.Flags.HasFlag(VTexFlags.CUBE_TEXTURE);
         isArray = texture.Depth > 1;
@@ -72,7 +85,7 @@ public sealed class TextureExtract
     /// <summary>
     /// The vtex content file. Input image(s) come as subfiles.
     /// </summary>
-    public ContentFile ToContentFile(bool ignoreVtexFile = false)
+    public ContentFile ToContentFile()
     {
         var rawImage = texture.ReadRawImageData();
         if (rawImage != null)
@@ -80,13 +93,14 @@ public sealed class TextureExtract
             return new ContentFile() { Data = rawImage };
         }
 
+        Func<SKBitmap, byte[]> ImageEncode = ExportExr ? ToExrImage : ToPngImage;
+
         //
         // Multiple images path
         //
         if (isArray || isCubeMap)
         {
             var contentFile = new ContentFile();
-            var extension = '.' + GetImageOutputExtension(texture);
 
             for (uint depth = 0; depth < texture.Depth; depth++)
             {
@@ -101,10 +115,9 @@ public sealed class TextureExtract
                 {
                     var currentDepth = depth;
 
-                    contentFile.AddSubFile(outTextureName + extension, () =>
+                    contentFile.AddSubFile(outTextureName + ImageOutputExtension, () =>
                     {
-                        // TODO: not png
-                        return EncodePng(texture.GenerateBitmap(depth: currentDepth));
+                        return ImageEncode(texture.GenerateBitmap(depth: currentDepth, decodeFlags: DecodeFlags));
                     });
 
                     continue;
@@ -115,11 +128,10 @@ public sealed class TextureExtract
                     var currentDepth = depth;
                     var currentFace = face;
 
-                    contentFile.AddSubFile($"{outTextureName}_{CubemapNames[face]}{extension}", () =>
+                    contentFile.AddSubFile($"{outTextureName}_{CubemapNames[face]}{ImageOutputExtension}", () =>
                     {
-                        // TODO: not png
-                        using var bitmap = texture.GenerateBitmap(depth: currentDepth, face: (Texture.CubemapFace)currentFace);
-                        return EncodePng(bitmap);
+                        using var bitmap = texture.GenerateBitmap(depth: currentDepth, face: (Texture.CubemapFace)currentFace, decodeFlags: DecodeFlags);
+                        return ImageEncode(bitmap);
                     });
                 }
             }
@@ -127,11 +139,11 @@ public sealed class TextureExtract
             return contentFile;
         }
 
-        var bitmap = texture.GenerateBitmap();
+        var bitmap = texture.GenerateBitmap(decodeFlags: DecodeFlags);
 
         var vtex = new TextureContentFile()
         {
-            Data = ignoreVtexFile ? null : Encoding.UTF8.GetBytes(ToValveTexture()),
+            Data = IgnoreVtexFile ? null : Encoding.UTF8.GetBytes(ToValveTexture()),
             Bitmap = bitmap,
             FileName = fileName,
         };
@@ -148,13 +160,13 @@ public sealed class TextureExtract
             return vtex;
         }
 
-        vtex.AddImageSubFile(Path.GetFileName(GetImageFileName()), ToPngImage);
+        vtex.AddImageSubFile(Path.GetFileName(GetImageFileName()), ImageEncode);
         return vtex;
     }
 
     public TextureContentFile ToMaterialMaps(IEnumerable<MaterialExtract.UnpackInfo> mapsToUnpack)
     {
-        var bitmap = texture.GenerateBitmap();
+        var bitmap = texture.GenerateBitmap(decodeFlags: DecodeFlags);
         bitmap.SetImmutable();
 
         var vtex = new TextureContentFile()
@@ -173,6 +185,11 @@ public sealed class TextureExtract
 
     public static string GetImageOutputExtension(Texture texture)
     {
+        if (texture.IsHighDynamicRange) // todo: also check DecodeFlags for ForceLDR
+        {
+            return "exr";
+        }
+
         if (texture.IsRawJpeg)
         {
             return "jpeg";
@@ -182,7 +199,7 @@ public sealed class TextureExtract
     }
 
     private string GetImageFileName()
-        => Path.ChangeExtension(fileName, GetImageOutputExtension(texture));
+        => Path.ChangeExtension(fileName, ImageOutputExtension);
 
     private string GetMksFileName()
         => Path.ChangeExtension(fileName, "mks");
@@ -416,6 +433,25 @@ public sealed class TextureExtract
 
         using var png = pixels.Encode(options);
         return png.ToArray();
+    }
+
+    public static byte[] ToExrImage(SKBitmap bitmap)
+    {
+        using var pixels = bitmap.PeekPixels();
+        return ToExrImage(pixels);
+    }
+
+    public static byte[] ToExrImage(SKPixmap pixels)
+    {
+        var pixelSpan = pixels.GetPixelSpan<SKColorF>();
+        var floatSpan = MemoryMarshal.Cast<SKColorF, float>(pixelSpan);
+        var result = Exr.SaveEXRToMemory(floatSpan, pixels.Width, pixels.Height, components: 4, asFp16: false, out var exrData);
+        if (result != ResultCode.Success)
+        {
+            throw new InvalidOperationException($"Got result {result} while saving EXR image");
+        }
+
+        return exrData;
     }
 
     public bool TryGetMksData(out Dictionary<SKRectI, string> sprites, out string mks)

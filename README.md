@@ -125,7 +125,8 @@ Magic        | Description
 `0xC4CCACE8` | tools asset info
 `0xC4CCACE9` | tools asset info (newer version)
 `0x32736376` | vcs2 - compiled shader
-`0x31415926` | murmurhash2 seed used in various places (like entity keys)
+`0x31415926` | murmurhash2 seed used by StringToken
+`0xEDABCDEF` | murmurhash64 seed used to encode resource IDs
 `VFONT1`     | "encrypted" font file
 `0x00564645` | VFE - flex scene file
 
@@ -166,25 +167,29 @@ There are also `--stats` related options, but they are not listed here as they a
 ```powershell
 # List all files in the vpk
 # Use `--vpk_dir` to also print file metadata
-.\Decompiler.exe -i "core/pak01_dir.vpk" --vpk_list
+./Source2Viewer-CLI.exe -i "core/pak01_dir.vpk" --vpk_list
 
 # Export the entire vpk as is
-.\Decompiler.exe -i "core/pak01_dir.vpk" --output "pak01_exported"
+./Source2Viewer-CLI.exe -i "core/pak01_dir.vpk" --output "pak01_exported"
 
 # Export only the "panorama/layout" folder
-.\Decompiler.exe -i "core/pak01_dir.vpk" --output "pak01_exported" --vpk_filepath "panorama/layout"
+./Source2Viewer-CLI.exe -i "core/pak01_dir.vpk" --output "pak01_exported" --vpk_filepath "panorama/layout"
 
 # Decompile and export all Panorama files to a folder named "exported"
-.\Decompiler.exe -i "core/pak01_dir.vpk" -e "vjs_c,vxml_c,vcss_c" -o "exported" -d
+./Source2Viewer-CLI.exe -i "core/pak01_dir.vpk" -e "vjs_c,vxml_c,vcss_c" -o "exported" -d
 
 # Print resource blocks for a specific file similar to resourceinfo.exe in Source 2
 # Use `--block DATA` to only print a specific block
-.\Decompiler.exe -i "file.vtex_c" --all
+./Source2Viewer-CLI.exe -i "file.vtex_c" --all
 
 # Decompile a specific file on disk
-.\Decompiler.exe -i "file.vtex_c" -o exported.png
+./Source2Viewer-CLI.exe -i "file.vtex_c" -o exported.png
 ```
 
 ## License
 
 Contents of this repository are available under [MIT license](LICENSE), except for `Tests/Files` folder contains files which have likely come from Valve's games.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).

@@ -133,8 +133,8 @@ namespace GUI.Types.Renderer
                         else
                         {
                             bounds = new AABB(
-                                node.EntityData.GetProperty<Vector3>("box_mins"),
-                                node.EntityData.GetProperty<Vector3>("box_maxs")
+                                node.EntityData.GetVector3Property("box_mins"),
+                                node.EntityData.GetVector3Property("box_maxs")
                             );
                         }
 
@@ -188,11 +188,19 @@ namespace GUI.Types.Renderer
 
             foreach (var node in selectedNodes)
             {
-                var name = node.DebugName;
+                string name;
 
                 if (node.EntityData != null)
                 {
                     name = node.EntityData.GetProperty<string>("classname");
+                }
+                else if (!string.IsNullOrEmpty(node.Name))
+                {
+                    name = node.Name;
+                }
+                else
+                {
+                    name = node.GetType().Name;
                 }
 
                 var position = node.BoundingBox.Center;
