@@ -1,31 +1,45 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Utils;
+using ValveKeyValue;
+using ValveResourceFormat.Serialization.KeyValues;
 
 namespace ValveResourceFormat.ResourceTypes
 {
-    public class ResourceManifest : ResourceData
+    /// <summary>
+    /// Represents a resource manifest.
+    /// </summary>
+    public class ResourceManifest : Block
     {
+        /// <inheritdoc/>
+        public override BlockType Type => BlockType.DATA;
+
+        /// <summary>
+        /// Gets the list of resources in the manifest.
+        /// </summary>
         public List<List<string>> Resources { get; private set; } = [];
 
-        public override void Read(BinaryReader reader, Resource resource)
+        /// <inheritdoc/>
+        public override void Read(BinaryReader reader)
         {
             reader.BaseStream.Position = Offset;
 
-            if (resource.ContainsBlockType(BlockType.NTRO))
+            Debug.Assert(Resource != null);
+
+            if (Resource.ContainsBlockType(BlockType.NTRO))
             {
                 var ntro = new NTRO
                 {
                     StructName = "ResourceManifest_t",
                     Offset = Offset,
                     Size = Size,
+                    Resource = Resource,
                 };
-                ntro.Read(reader, resource);
+                ntro.Read(reader);
 
                 Resources =
                 [
-                    new(ntro.Output.GetArray<string>("m_ResourceFileNameList")),
+                    new(ntro.Output.GetArray<string>("m_ResourceFileNameList")!),
                 ];
 
                 return;
@@ -61,14 +75,7 @@ namespace ValveResourceFormat.ResourceTypes
 
                 for (var i = 0; i < count; i++)
                 {
-                    var returnOffset = reader.BaseStream.Position;
-                    var stringOffset = reader.ReadInt32();
-                    reader.BaseStream.Position = returnOffset + stringOffset;
-
-                    var value = reader.ReadNullTermString(Encoding.UTF8);
-                    strings.Add(value);
-
-                    reader.BaseStream.Position = returnOffset + 4;
+                    strings.Add(reader.ReadOffsetString(Encoding.UTF8));
                 }
 
                 reader.BaseStream.Position = originalOffset + 8;
@@ -77,20 +84,54 @@ namespace ValveResourceFormat.ResourceTypes
             }
         }
 
-        public override string ToString()
+        /// <inheritdoc/>
+        public override void Serialize(Stream stream)
         {
-            using var writer = new IndentedTextWriter();
-            foreach (var block in Resources)
+            throw new NotImplementedException("Serializing this block is not yet supported. If you need this, send us a pull request!");
+        }
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Outputs the resource manifest as a KV3 object.
+        /// </remarks>
+        public override void WriteText(IndentedTextWriter writer)
+        {
+            GetPrintabaleObject().WriteKV3Text(writer);
+        }
+
+        private KVDocument GetPrintabaleObject()
+        {
+            var root = new KVObject();
+
+            if (Resources.Count == 0)
             {
-                foreach (var entry in block)
-                {
-                    writer.WriteLine(entry);
-                }
-
-                writer.WriteLine();
+                root.Add("resourceManifest", KVObject.Array());
+                return root.ToKV3Document();
             }
-
-            return writer.ToString();
+            if (Resources.Count == 1)
+            {
+                var arr = KVObject.Array();
+                foreach (var file in Resources[0])
+                {
+                    arr.Add(file);
+                }
+                root.Add("resourceManifest", arr);
+            }
+            else
+            {
+                var outerArray = KVObject.Array();
+                foreach (var resourceList in Resources)
+                {
+                    var innerArray = KVObject.Array();
+                    foreach (var file in resourceList)
+                    {
+                        innerArray.Add(file);
+                    }
+                    outerArray.Add(innerArray);
+                }
+                root.Add("resourceManifest", outerArray);
+            }
+            return root.ToKV3Document();
         }
     }
 }

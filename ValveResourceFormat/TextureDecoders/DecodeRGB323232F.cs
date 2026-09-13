@@ -4,14 +4,14 @@ using RGB323232F = (float R, float G, float B);
 
 namespace ValveResourceFormat.TextureDecoders
 {
-    internal class DecodeRGB323232F : ITextureDecoder
+    internal readonly struct DecodeRGB323232F : ITextureDecoder
     {
         public void Decode(SKBitmap bitmap, Span<byte> input)
         {
             using var pixels = bitmap.PeekPixels();
             var inputPixels = MemoryMarshal.Cast<byte, RGB323232F>(input);
 
-            if (bitmap.ColorType == SKColorType.RgbaF32)
+            if (bitmap.ColorType == ResourceTypes.Texture.HdrBitmapColorType)
             {
                 DecodeHdr(pixels, inputPixels);
                 return;
@@ -20,7 +20,7 @@ namespace ValveResourceFormat.TextureDecoders
             DecodeLdr(pixels, inputPixels);
         }
 
-        private static void DecodeHdr(SKPixmap pixels, Span<RGB323232F> inputPixels)
+        private static void DecodeHdr(SKPixmap pixels, ReadOnlySpan<RGB323232F> inputPixels)
         {
             var hdrColors = pixels.GetPixelSpan<SKColorF>();
 
@@ -31,7 +31,7 @@ namespace ValveResourceFormat.TextureDecoders
             }
         }
 
-        private static void DecodeLdr(SKPixmap pixels, Span<RGB323232F> inputPixels)
+        private static void DecodeLdr(SKPixmap pixels, ReadOnlySpan<RGB323232F> inputPixels)
         {
             var ldrColors = pixels.GetPixelSpan<SKColor>();
 

@@ -4,6 +4,7 @@ using System.Text;
 using System.Windows.Forms;
 using ValveResourceFormat;
 using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.ResourceTypes.Choreo;
 using ValveResourceFormat.Serialization.KeyValues;
 
 namespace GUI.Controls
@@ -11,22 +12,21 @@ namespace GUI.Controls
     class ChoreoViewer : TextControl
     {
         private readonly ChoreoSceneFileData choreoDataList;
-        private ListView fileListView;
+        private readonly ListView fileListView;
+
         public ChoreoViewer(Resource resource)
         {
-            choreoDataList = (ChoreoSceneFileData)resource.DataBlock;
+            var dataBlock = (ChoreoSceneFileData?)resource.DataBlock;
+            ArgumentNullException.ThrowIfNull(dataBlock);
+            choreoDataList = dataBlock;
 
             var fileName = Path.GetFileNameWithoutExtension(resource.FileName) + ".vcdlist";
-            AddList(fileName);
-        }
 
-        private void AddList(string vcdListName)
-        {
             fileListView = new ListView
             {
                 View = View.Details,
                 Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
-
+                Dock = DockStyle.Fill,
                 FullRowSelect = true,
                 MultiSelect = false,
                 ShowItemToolTips = true
@@ -35,19 +35,21 @@ namespace GUI.Controls
 
             fileListView.Columns.Add("Name", 250);
             fileListView.Columns.Add("Version");
+            fileListView.Columns.Add("Duration (s)", 90);
+            fileListView.Columns.Add("Sound duration (s)", 130);
+            fileListView.Columns.Add("Has sounds", 90);
 
-            AddListItem(null, vcdListName, choreoDataList.Version);
+            AddListItem(null, fileName, choreoDataList.Version, null);
             for (var i = 0; i < choreoDataList.Scenes.Length; i++)
             {
                 var scene = choreoDataList.Scenes[i];
-                AddListItem(i, scene.Name, scene.Version);
+                AddListItem(i, scene.Name ?? string.Empty, scene.Version, scene);
             }
 
             AddControl(fileListView);
-            fileListView.Dock = DockStyle.Fill;
         }
 
-        private void AddListItem(int? index, string name, int version)
+        private void AddListItem(int? index, string name, int version, ChoreoScene? scene)
         {
             var item = fileListView.Items.Add(new ListViewItem
             {
@@ -58,15 +60,19 @@ namespace GUI.Controls
             var versionString = version.ToString(CultureInfo.InvariantCulture);
             item.SubItems.Add(versionString);
 
+            item.SubItems.Add(scene == null ? string.Empty : FormatMilliseconds(scene.Duration));
+            item.SubItems.Add(scene == null ? string.Empty : FormatMilliseconds(scene.SoundDuration));
+            item.SubItems.Add(scene == null ? string.Empty : (scene.HasSounds ? "Yes" : "No"));
+
             item.Tag = index;
         }
 
-        protected override void InitLayout()
+        private static string FormatMilliseconds(int milliseconds)
         {
-            base.InitLayout();
+            return (milliseconds / 1000f).ToString("0.000", CultureInfo.InvariantCulture);
         }
 
-        private void FileListView_ItemSelectionChanged(object sender, EventArgs e)
+        private void FileListView_ItemSelectionChanged(object? sender, EventArgs e)
         {
             if (fileListView.SelectedItems.Count == 0)
             {
@@ -100,8 +106,7 @@ namespace GUI.Controls
         private void ShowVcd(int index)
         {
             var scene = choreoDataList.Scenes[index];
-            var kv = new KV3File(scene.ToKeyValues());
-            TextBox.Text = kv.ToString();
+            TextBox.Text = scene.ToKeyValues().ToKV3String();
         }
 
         protected override void Dispose(bool disposing)

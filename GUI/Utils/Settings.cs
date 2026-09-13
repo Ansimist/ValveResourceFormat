@@ -1,85 +1,146 @@
-using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
-using System.Windows.Forms;
 using ValveKeyValue;
 using ValveResourceFormat.IO;
 
 namespace GUI.Utils
 {
+    /// <summary>
+    /// Manages application settings.
+    /// </summary>
     static class Settings
     {
-        private const int SettingsFileCurrentVersion = 10;
+        private const int SettingsFileCurrentVersion = 17;
         private const int RecentFilesLimit = 20;
 
+        /// <summary>
+        /// Flags that control quick file preview behavior in the file explorer.
+        /// </summary>
         [Flags]
         public enum QuickPreviewFlags : int
         {
+            /// <summary>Quick preview is enabled.</summary>
             Enabled = 1 << 0,
+            /// <summary>Sounds are automatically played when previewing audio files.</summary>
             AutoPlaySounds = 1 << 1,
         }
 
+        /// <summary>
+        /// The channel that application updates are offered from.
+        /// </summary>
+        public enum UpdateChannel : int
+        {
+            /// <summary>Tagged stable releases.</summary>
+            Stable = 0,
+            /// <summary>Automated builds of the master branch.</summary>
+            Dev = 1,
+        }
+
+        /// <summary>
+        /// Holds state related to automatic application update checks.
+        /// </summary>
         public class AppUpdateState
         {
+            /// <summary>Gets or sets whether to automatically check for updates on startup.</summary>
             public bool CheckAutomatically { get; set; }
+            /// <summary>Gets or sets the channel that updates are offered from.</summary>
+            public UpdateChannel Channel { get; set; }
+            /// <summary>Gets or sets whether a newer version of the application is available.</summary>
             public bool UpdateAvailable { get; set; }
-            public string LastCheck { get; set; }
-            public string Version { get; set; }
+            /// <summary>Gets or sets when the next automatic update check is due.</summary>
+            public string NextCheck { get; set; } = string.Empty;
+            /// <summary>Gets or sets the application version recorded the last time settings were loaded, used to detect version changes and reset update state.</summary>
+            public string Version { get; set; } = string.Empty;
         }
 
+        /// <summary>
+        /// Represents the full set of persisted application configuration values.
+        /// </summary>
         public class AppConfig
         {
-            public List<string> GameSearchPaths { get; set; }
+            /// <summary>Gets or sets the list of game content search paths.</summary>
+            public List<string> GameSearchPaths { get; set; } = [];
+            /// <summary>Gets or sets the last directory used when opening files.</summary>
             public string OpenDirectory { get; set; } = string.Empty;
+            /// <summary>Gets or sets the last directory used when saving files.</summary>
             public string SaveDirectory { get; set; } = string.Empty;
-            public List<string> BookmarkedFiles { get; set; }
-            public List<string> RecentFiles { get; set; }
-            public Dictionary<string, float[]> SavedCameras { get; set; }
+            /// <summary>Gets or sets the list of bookmarked file paths.</summary>
+            public List<string> BookmarkedFiles { get; set; } = [];
+            /// <summary>Gets or sets the list of recently opened file paths.</summary>
+            public List<string> RecentFiles { get; set; } = [];
+            /// <summary>Gets or sets saved camera positions keyed by name.</summary>
+            public Dictionary<string, float[]> SavedCameras { get; set; } = [];
+            /// <summary>Gets or sets the selected UI theme index.</summary>
+            public int Theme { get; set; }
+            /// <summary>Gets or sets the maximum texture resolution loaded by the renderer.</summary>
             public int MaxTextureSize { get; set; }
+            /// <summary>Gets or sets the shadow map resolution.</summary>
             public int ShadowResolution { get; set; }
+            /// <summary>Gets or sets the camera field of view in degrees.</summary>
             public float FieldOfView { get; set; }
+            /// <summary>Gets or sets the first-person viewmodel field of view in degrees.</summary>
+            public float ViewmodelFieldOfView { get; set; }
+            /// <summary>Gets or sets the mouse look sensitivity.</summary>
+            public float MouseSensitivity { get; set; }
+            /// <summary>Gets or sets whether the viewport camera should have acceleration/deceleration when starting or stopping to move</summary>
+            public bool SmoothCameraEnabled { get; set; }
+            /// <summary>Gets or sets the number of MSAA samples used for anti-aliasing.</summary>
             public int AntiAliasingSamples { get; set; }
+            /// <summary>Gets or sets the top edge position of the main window.</summary>
             public int WindowTop { get; set; }
+            /// <summary>Gets or sets the left edge position of the main window.</summary>
             public int WindowLeft { get; set; }
+            /// <summary>Gets or sets the width of the main window.</summary>
             public int WindowWidth { get; set; }
+            /// <summary>Gets or sets the height of the main window.</summary>
             public int WindowHeight { get; set; }
+            /// <summary>Gets or sets the window state (normal, minimized, maximized).</summary>
             public int WindowState { get; set; }
+            /// <summary>Gets or sets the normalized audio playback volume.</summary>
             public float Volume { get; set; }
+            /// <summary>Gets or sets the swap interval (the number of screen updates to wait between swapping front and back buffers).</summary>
             public int Vsync { get; set; }
+            /// <summary>Gets or sets whether the FPS counter is shown in the viewport.</summary>
             public int DisplayFps { get; set; }
+            /// <summary>Gets or sets the <see cref="QuickPreviewFlags"/> bitmask for quick file preview behavior.</summary>
             public int QuickFilePreview { get; set; }
+            /// <summary>Gets or sets whether the file explorer panel is opened automatically on start (suppressed on first startup or when command-line files are provided).</summary>
             public int OpenExplorerOnStart { get; set; }
+            /// <summary>Gets or sets the font size used in the text viewer.</summary>
+            public int TextViewerFontSize { get; set; }
+            /// <summary>Gets or sets whether the package file list uses grid view (1) or list view (0).</summary>
+            public int PackageGridView { get; set; }
+            /// <summary>Gets or sets the grid thumbnail size index (0-4, mapping to <see cref="GUI.Types.PackageViewer.ThumbnailRenderers.ThumbnailSizes"/> enum).</summary>
+            public int PackageGridSize { get; set; }
+            /// <summary>Internal settings file version used to apply migrations when upgrading from older versions. Do not modify manually.</summary>
             public int _VERSION_DO_NOT_MODIFY { get; set; }
-            public AppUpdateState Update { get; set; }
+            /// <summary>Gets or sets the application update check state.</summary>
+            public AppUpdateState Update { get; set; } = new();
         }
 
+        /// <summary>Gets whether this is the first time the application has been launched (no prior settings were found).</summary>
         public static bool IsFirstStartup { get; private set; }
-        public static string SettingsFolder { get; private set; }
-        private static string SettingsFilePath;
+        /// <summary>Gets the folder path where the settings file and other persistent application data are stored.</summary>
+        public static string SettingsFolder { get; private set; } = string.Empty;
+        private static string SettingsFilePath = string.Empty;
 
-        public static AppConfig Config { get; set; } = new AppConfig();
+        /// <summary>Gets the active application configuration.</summary>
+        public static AppConfig Config { get; private set; } = new AppConfig();
 
-        public static event EventHandler RefreshCamerasOnSave;
-        public static void InvokeRefreshCamerasOnSave() => RefreshCamerasOnSave.Invoke(null, null);
+        /// <summary>Raised when <see cref="AppConfig.SavedCameras"/> is mutated, signaling subscribers to refresh their camera lists.</summary>
+        public static event EventHandler? RefreshCamerasOnSave;
+        /// <summary>Raises the <see cref="RefreshCamerasOnSave"/> event.</summary>
+        public static void InvokeRefreshCamerasOnSave() => RefreshCamerasOnSave?.Invoke(null, EventArgs.Empty);
 
-        public static string GpuRendererAndDriver;
-
+        /// <summary>
+        /// Loads the application configuration from disk, applies defaults and migrations for older
+        /// settings file versions, and populates <see cref="Config"/>.
+        /// </summary>
         public static void Load()
         {
             SettingsFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Source2Viewer");
             SettingsFilePath = Path.Combine(SettingsFolder, "settings.vdf");
 
             Directory.CreateDirectory(SettingsFolder);
-
-            // Before 2023-09-08, settings were saved next to the executable
-            var legacySettings = Path.Combine(Path.GetDirectoryName(Process.GetCurrentProcess().MainModule?.FileName), "settings.txt");
-
-            if (File.Exists(legacySettings) && !File.Exists(SettingsFilePath))
-            {
-                Log.Info(nameof(Settings), $"Moving '{legacySettings}' to '{SettingsFilePath}'.");
-
-                File.Move(legacySettings, SettingsFilePath);
-            }
 
             try
             {
@@ -112,14 +173,16 @@ namespace GUI.Utils
 
             if (currentVersion > SettingsFileCurrentVersion)
             {
-                var result = MessageBox.Show(
+                // Blocking on the task is only safe here because this runs at startup before
+                // the UI exists, when we switch to pangui, this will need to be correctly awaited
+                // to not block the UI thread
+                var continueAnyway = AppMessageDialogs.ConfirmAsync(
                     $"Your current settings.vdf has a higher version ({currentVersion}) than currently supported ({SettingsFileCurrentVersion}). You likely ran an older version of Source 2 Viewer and your settings may get reset.\n\nDo you want to continue?",
                     "Source 2 Viewer downgraded",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Question
-                );
+                    buttons: ConfirmButtons.YesNo
+                ).GetAwaiter().GetResult();
 
-                if (result != DialogResult.Yes)
+                if (!continueAnyway)
                 {
                     Environment.Exit(1);
                     return;
@@ -160,17 +223,31 @@ namespace GUI.Utils
                 Config.ShadowResolution = 4096;
             }
 
-            if (Config.FieldOfView <= 0)
+            // upgrade fov
+            if (currentVersion > 0 && currentVersion < 16)
             {
-                Config.FieldOfView = 60;
-            }
-            else if (Config.FieldOfView >= 120)
-            {
-                Config.FieldOfView = 120;
+                var oldVerticalRadians = float.DegreesToRadians(Config.FieldOfView);
+                var horizontalAt4By3Radians = 2f * MathF.Atan(MathF.Tan(oldVerticalRadians * 0.5f) * (4f / 3f));
+                Config.FieldOfView = float.RadiansToDegrees(horizontalAt4By3Radians);
             }
 
+            if (Config.FieldOfView <= 0)
+            {
+                Config.FieldOfView = 90;
+            }
+
+            Config.FieldOfView = Math.Clamp(Config.FieldOfView, 1, 170);
+            Config.ViewmodelFieldOfView = Math.Clamp(Config.ViewmodelFieldOfView, 40, 80);
+
             Config.AntiAliasingSamples = Math.Clamp(Config.AntiAliasingSamples, 0, 64);
-            Config.Volume = Math.Clamp(Config.Volume, 0f, 1f);
+            Config.Volume = MathUtils.Saturate(Config.Volume);
+            Config.TextViewerFontSize = Math.Clamp(Config.TextViewerFontSize, 8, 24);
+            Config.PackageGridSize = Math.Clamp(Config.PackageGridSize, 0, Enum.GetValues<Types.PackageViewer.ThumbnailRenderers.ThumbnailSizes>().Length - 1);
+
+            if (!Enum.IsDefined(Config.Update.Channel))
+            {
+                Config.Update.Channel = UpdateChannel.Stable;
+            }
 
             if (currentVersion < 2) // version 2: added anti aliasing samples
             {
@@ -202,22 +279,59 @@ namespace GUI.Utils
                 IsFirstStartup = true;
             }
 
+            if (currentVersion < 11) // version 11: added text viewer font size
+            {
+                Config.TextViewerFontSize = 10;
+            }
+
+            if (currentVersion < 12) // version 12: enable automatic update checks by default
+            {
+                Config.Update.CheckAutomatically = true;
+            }
+
+            if (currentVersion < 13) // version 13: added package grid view and grid size
+            {
+                Config.PackageGridView = 1;
+                Config.PackageGridSize = 2;
+            }
+
+            if (currentVersion < 14) // version 14: added mouse sensitivity
+            {
+                Config.MouseSensitivity = 4f;
+            }
+
+            if (currentVersion < 15) // version 15: added smooth camera setting
+            {
+                Config.SmoothCameraEnabled = true;
+            }
+
+            if (currentVersion < 16) // version 16: added viewmodel field of view
+            {
+                Config.ViewmodelFieldOfView = 64;
+            }
+
             if (currentVersion > 0 && currentVersion != SettingsFileCurrentVersion)
             {
                 Log.Info(nameof(Settings), $"Settings version changed: {currentVersion} -> {SettingsFileCurrentVersion}");
             }
 
             // If the version changed, force an update check (if enabled)
-            if (Config.Update.Version != Application.ProductVersion)
+            if (Config.Update.Version != Program.ProductVersion)
             {
-                Config.Update.Version = Application.ProductVersion;
+                Config.Update.Version = Program.ProductVersion;
                 Config.Update.UpdateAvailable = false;
-                Config.Update.LastCheck = string.Empty;
+                Config.Update.NextCheck = string.Empty;
+
+                // Installing a build, whether through the updater or by hand, is choosing its channel
+                Config.Update.Channel = Program.BuildChannel;
             }
 
             Config._VERSION_DO_NOT_MODIFY = SettingsFileCurrentVersion;
         }
 
+        /// <summary>
+        /// Serializes the current <see cref="Config"/> to disk, writing atomically via a temp file.
+        /// </summary>
         public static void Save()
         {
             var tempFile = Path.GetTempFileName();
@@ -230,6 +344,11 @@ namespace GUI.Utils
             File.Move(tempFile, SettingsFilePath, overwrite: true);
         }
 
+        /// <summary>
+        /// Appends <paramref name="path"/> to the end of the recent files list (most recent last),
+        /// removing any duplicate entry, trimming the oldest entries to <see cref="RecentFilesLimit"/>, then saves.
+        /// </summary>
+        /// <param name="path">The absolute file path to record as recently opened.</param>
         public static void TrackRecentFile(string path)
         {
             Config.RecentFiles.Remove(path);
@@ -243,6 +362,9 @@ namespace GUI.Utils
             Save();
         }
 
+        /// <summary>
+        /// Clears the recent files list and saves.
+        /// </summary>
         public static void ClearRecentFiles()
         {
             Config.RecentFiles.Clear();

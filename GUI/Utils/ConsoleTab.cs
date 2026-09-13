@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
@@ -19,9 +20,15 @@ namespace GUI.Utils
                 this.action = action;
             }
 
-            public override Encoding Encoding => null;
+            public override Encoding Encoding => Encoding.UTF8;
 
-            public override void WriteLine(string value) => action(value);
+            public override void WriteLine(string? value)
+            {
+                if (value != null)
+                {
+                    action(value);
+                }
+            }
         }
 
         private struct LogLine
@@ -29,18 +36,19 @@ namespace GUI.Utils
             public DateTime Time;
             public string Component;
             public string Message;
-            public TextStyle Style;
+            public TextStyle? Style;
         }
 
         private static readonly TextStyle TextStyleTime = new(Brushes.DarkGray, null, FontStyle.Regular);
         private static readonly TextStyle TextStyleError = new(Brushes.Orange, Brushes.DarkRed, FontStyle.Regular);
         private static readonly TextStyle TextStyleWarn = new(Brushes.Orange, null, FontStyle.Regular);
-        private static readonly TextStyle TextStyleDebug = new(Brushes.LightGreen, null, FontStyle.Regular);
+        private static readonly TextStyle TextStyleDebug = new(Themer.CurrentThemeColors.ColorMode == SystemColorMode.Dark ? Brushes.LightGreen : Brushes.ForestGreen, null, FontStyle.Regular);
 
-        private CodeTextBox control;
-        private MyLogger loggerOut;
-        private MyLogger loggerError;
-        private readonly Queue<LogLine> LogQueue = new(16);
+        private CodeTextBox? control;
+        private MyLogger? loggerOut;
+        private MyLogger? loggerError;
+        // Written from any thread that logs; a plain queue corrupts its array under concurrent growth.
+        private readonly ConcurrentQueue<LogLine> LogQueue = new();
 
         public void Dispose()
         {
@@ -65,7 +73,7 @@ namespace GUI.Utils
 
         public void WriteLine(Log.Category category, string component, string message)
         {
-            if (control.IsDisposed)
+            if (control == null || control.IsDisposed)
             {
                 return;
             }
@@ -78,6 +86,8 @@ namespace GUI.Utils
                 _ => null,
             };
 
+            var queueEmpty = LogQueue.IsEmpty;
+
             // If we happen to spam console text somewhere, appending every line to console bogs down performance (yay winforms)
             // so accumulate it into a buffer and append it all at once when visibility changes
             LogQueue.Enqueue(new LogLine
@@ -88,7 +98,7 @@ namespace GUI.Utils
                 Style = style
             });
 
-            if (control.Visible)
+            if (queueEmpty && control.Visible)
             {
                 control.BeginInvoke(DrainQueue);
             }
@@ -96,7 +106,7 @@ namespace GUI.Utils
 
         private void DrainQueue()
         {
-            if (LogQueue.Count == 0)
+            if (control == null || LogQueue.IsEmpty)
             {
                 return;
             }
@@ -115,8 +125,8 @@ namespace GUI.Utils
                 }
 
                 control.AppendText(sb.ToString());
-                control.GoEnd();
                 control.EndUpdate();
+                ScrollToBottom();
                 return;
             }
 
@@ -129,13 +139,7 @@ namespace GUI.Utils
 
                 // Add fold for multi line strings
                 // TODO: For multiline strings, indent them with the time/component size
-                var index = -1;
-                var newLines = 0;
-
-                while (-1 != (index = line.Message.IndexOf('\n', index + 1)))
-                {
-                    newLines++;
-                }
+                var newLines = line.Message.AsSpan().Count('\n');
 
                 if (newLines > 0)
                 {
@@ -145,14 +149,31 @@ namespace GUI.Utils
                 }
             }
 
-            control.GoEnd();
             control.EndUpdate();
+            ScrollToBottom();
+        }
+
+        private void ScrollToBottom()
+        {
+            if (control == null)
+            {
+                return;
+            }
+
+            var selection = control.Selection;
+
+            if (selection.Start != selection.End)
+            {
+                return;
+            }
+
+            control.GoEnd();
         }
 
         public TabPage CreateTab()
         {
             var bgColor = Color.FromArgb(37, 37, 37);
-            control = new CodeTextBox(null, CodeTextBox.HighlightLanguage.None)
+            control = new CodeTextBox(string.Empty, HighlightLanguage.None)
             {
                 BackColor = bgColor,
                 ForeColor = Color.FromArgb(240, 240, 240),
@@ -160,12 +181,12 @@ namespace GUI.Utils
             };
             control.VisibleChanged += VisibleChanged;
 
-            control.AppendText($"- Welcome to Source 2 Viewer v{Application.ProductVersion}{Environment.NewLine}", TextStyleDebug);
-            control.AppendText($"- If you are experiencing an issue, try using latest dev build from https://valveresourceformat.github.io/{Environment.NewLine}{Environment.NewLine}");
+            control.AppendText($"- Welcome to Source 2 Viewer v{Program.ProductVersion}{Environment.NewLine}", TextStyleDebug);
+            control.AppendText($"- If you are experiencing an issue, try updating to the latest dev build from the About window{Environment.NewLine}{Environment.NewLine}");
 
             const string CONSOLE = "Console";
 
-            var tab = new TabPage(CONSOLE)
+            var tab = new ThemedTabPage(CONSOLE)
             {
                 BackColor = bgColor,
             };
@@ -180,7 +201,12 @@ namespace GUI.Utils
             return tab;
         }
 
-        private void VisibleChanged(object sender, EventArgs e)
+        public void InitializeFont()
+        {
+            control?.Font = CodeTextBox.GetMonospaceFont();
+        }
+
+        private void VisibleChanged(object? sender, EventArgs e)
         {
             DrainQueue();
         }
@@ -188,7 +214,7 @@ namespace GUI.Utils
         internal void ClearBuffer()
         {
             LogQueue.Clear();
-            control.Clear();
+            control?.Clear();
         }
     }
 }

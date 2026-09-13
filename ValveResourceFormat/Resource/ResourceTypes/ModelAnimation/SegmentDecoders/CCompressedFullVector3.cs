@@ -2,8 +2,12 @@ using System.Runtime.InteropServices;
 
 namespace ValveResourceFormat.ResourceTypes.ModelAnimation.SegmentDecoders
 {
-    public class CCompressedFullVector3 : AnimationSegmentDecoder
+    /// <summary>
+    /// Decodes full-precision Vector3 animation data.
+    /// </summary>
+    internal class CCompressedFullVector3 : AnimationSegmentDecoder
     {
+        /// <inheritdoc/>
         public override void Read(int frameIndex, Frame outFrame)
         {
             var offset = frameIndex * ElementCount;

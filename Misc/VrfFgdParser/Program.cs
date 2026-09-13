@@ -2,12 +2,23 @@ using System.Globalization;
 using System.Text;
 using Sledge.Formats.GameData;
 using Sledge.Formats.GameData.Objects;
+using ValveResourceFormat.IO;
 using VrfFgdParser;
 
-if (args?.Length < 1)
+var pathsToCheck = args ?? [];
+
+if (pathsToCheck.Length < 1)
 {
-    Console.Error.WriteLine("Usage: ./program <path to Steam to find .fgd files in>");
-    return 1;
+    Console.Error.WriteLine("Usage: ./program [path to Steam to find .fgd files in]");
+
+    if (GameFolderLocator.SteamPath == null)
+    {
+        return 1;
+    }
+
+    Console.Error.WriteLine($"No path specified, searching Steam libraries.");
+
+    pathsToCheck = [.. GameFolderLocator.FindAllSteamGames().Select(static x => x.SteamPath).ToHashSet()];
 }
 
 var allEntities = new SortedDictionary<string, EntityInfo>();
@@ -15,13 +26,15 @@ var allProperties = new HashSet<string>();
 var baseEntities = new Dictionary<string, EntityInfo>();
 var entityMaterials = new Dictionary<string, string>();
 
-foreach (var arg in args!)
+foreach (var arg in pathsToCheck)
 {
     if (!Directory.Exists(arg))
     {
         Console.Error.WriteLine($"'{arg}' does not exist.");
         continue;
     }
+
+    Console.WriteLine($"Searching {arg}");
 
     foreach (var file in Directory.EnumerateFiles(arg, "*.fgd", SearchOption.AllDirectories))
     {
@@ -158,23 +171,31 @@ void ParseFile(string file)
                 }
             }
 
+            // "studio()" is the entity's real in-game model. "editormodel()"/"model()" are Hammer-only
+            // visualization aids that don't represent the entity's actual appearance.
+            var isStudioValue = false;
+
             if ((behaviour.Name == "studio" || behaviour.Name == "editormodel" || behaviour.Name == "model") && behaviour.Values.Count > 0)
             {
                 value = behaviour.Values[0];
 
-                if (!value.StartsWith("models/", StringComparison.Ordinal) && !value.StartsWith("characters/models/", StringComparison.Ordinal))
+                if (value is not "editormodel" and not "static")
                 {
-                    value = "models/" + value;
-                }
+                    if (value.EndsWith(".mdl", StringComparison.Ordinal))
+                    {
+                        value = value[..^4] + ".vmdl";
+                    }
 
-                if (value.EndsWith(".mdl", StringComparison.Ordinal))
-                {
-                    value = value[..^4] + ".vmdl";
-                }
+                    if (!value.EndsWith(".vmdl", StringComparison.Ordinal))
+                    {
+                        value += ".vmdl";
+                    }
 
-                if (!value.EndsWith(".vmdl", StringComparison.Ordinal))
+                    isStudioValue = behaviour.Name == "studio";
+                }
+                else
                 {
-                    value += ".vmdl";
+                    value = null;
                 }
             }
 
@@ -185,6 +206,7 @@ void ParseFile(string file)
                     if (baseEntities.TryGetValue(baseClass, out var values) && values.Icons.Count > 0)
                     {
                         value = values.Icons.First(); // TODO: more than one
+                        isStudioValue = values.IsStudio;
                         Console.WriteLine($"Found {_class.Name} base icon from {baseClass}");
                         break;
                     }
@@ -198,11 +220,13 @@ void ParseFile(string file)
                 if (icons.TryGetValue(_class.Name, out var existingIcons))
                 {
                     existingIcons.Icons.Add(value);
+                    existingIcons.IsStudio |= isStudioValue;
                 }
                 else
                 {
                     icons[_class.Name] = new();
                     icons[_class.Name].Icons.Add(value);
+                    icons[_class.Name].IsStudio = isStudioValue;
                 }
             }
 
@@ -246,7 +270,7 @@ void ParseFile(string file)
             {
                 if (behaviour.Name == "line" && behaviour.Values.Count > 3)
                 {
-                    var color = ConstructColor(behaviour.Values.Take(3).ToList());
+                    var color = ConstructColor([.. behaviour.Values.Take(3)]);
                     var line = string.Empty;
 
                     if (behaviour.Values.Count == 5)
@@ -305,6 +329,11 @@ void WriteEntities()
         });
 
         var fields = new List<string>();
+
+        if (icon.Value.IsStudio)
+        {
+            fields.Add("Studio = true");
+        }
 
         if (icons.Count > 0)
         {
@@ -371,6 +400,7 @@ void WriteMaterials()
 class EntityInfo
 {
     public HashSet<string> Icons = [];
+    public bool IsStudio;
     public string? Color;
     public HashSet<string> Lines = [];
 }

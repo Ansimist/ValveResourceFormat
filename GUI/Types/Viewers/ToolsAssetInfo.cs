@@ -1,21 +1,22 @@
+using System.Diagnostics;
 using System.IO;
-using System.Windows.Forms;
-using GUI.Controls;
+using System.Threading.Tasks;
 using GUI.Utils;
 
 namespace GUI.Types.Viewers
 {
-    class ToolsAssetInfo : IViewer
+    class ToolsAssetInfo(VrfGuiContext vrfGuiContext) : IViewer, IDisposable
     {
+        private string? text;
+
         public static bool IsAccepted(uint magic)
         {
             return magic == ValveResourceFormat.ToolsAssetInfo.ToolsAssetInfo.MAGIC ||
                    magic == ValveResourceFormat.ToolsAssetInfo.ToolsAssetInfo.MAGIC2;
         }
 
-        public TabPage Create(VrfGuiContext vrfGuiContext, Stream stream)
+        public async Task LoadAsync(Stream? stream)
         {
-            var tab = new TabPage();
             var toolsAssetInfo = new ValveResourceFormat.ToolsAssetInfo.ToolsAssetInfo();
 
             if (stream != null)
@@ -24,13 +25,26 @@ namespace GUI.Types.Viewers
             }
             else
             {
-                toolsAssetInfo.Read(vrfGuiContext.FileName);
+                toolsAssetInfo.Read(vrfGuiContext.FileName!);
             }
 
-            var text = new CodeTextBox(toolsAssetInfo.ToString());
-            tab.Controls.Add(text);
+            text = toolsAssetInfo.ToString();
+        }
 
-            return tab;
+        public ViewerContent GetContent()
+        {
+            Debug.Assert(text is not null);
+
+            var content = new ViewerContent.Text(text);
+
+            text = null;
+
+            return content;
+        }
+
+        public void Dispose()
+        {
+            //
         }
     }
 }

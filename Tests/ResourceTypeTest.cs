@@ -1,40 +1,73 @@
-using NUnit.Framework;
+using System.Text;
+using System.Threading.Tasks;
 using ValveResourceFormat;
+using ValveResourceFormat.Utils;
 
 namespace Tests
 {
     public class ResourceTypeTest
     {
         [Test]
-        public void ReturnsCorrectExtension()
+        public async Task ReturnsCorrectExtension()
         {
-            Assert.Multiple(() =>
+            using (Assert.Multiple())
             {
-                Assert.That(ResourceType.Unknown.GetExtension(), Is.Null);
-                Assert.That(ResourceType.Animation.GetExtension(), Is.EqualTo("vanim"));
-                Assert.That(ResourceType.Panorama.GetExtension(), Is.EqualTo("vtxt"));
+                await Assert.That(ResourceType.Unknown.GetExtension()).IsNull();
+                await Assert.That(ResourceType.Animation.GetExtension()).IsEqualTo("vanim");
+                await Assert.That(ResourceType.Panorama.GetExtension()).IsEqualTo("vtxt");
 
-                Assert.That(((ResourceType)1333337).GetExtension(), Is.Null);
-            });
+                await Assert.That(((ResourceType)1333337).GetExtension()).IsNull();
+            }
         }
 
         [Test]
-        public void DeterminesResourceTypeByFileExtension()
+        public async Task DeterminesResourceTypeByFileExtension()
         {
-            Assert.Multiple(() =>
+            using (Assert.Multiple())
             {
-                Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".vcss_c"), Is.EqualTo(ResourceType.PanoramaStyle));
-                Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".vanim_c"), Is.EqualTo(ResourceType.Animation));
-                Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".vanim"), Is.EqualTo(ResourceType.Animation));
-                Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".vsmart_c"), Is.EqualTo(ResourceType.SmartProp));
-                Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".vanim_C"), Is.EqualTo(ResourceType.Unknown));
-                Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".anim"), Is.EqualTo(ResourceType.Unknown));
-                Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".anim_c"), Is.EqualTo(ResourceType.Unknown));
-                Assert.That(ResourceTypeExtensions.DetermineByFileExtension("."), Is.EqualTo(ResourceType.Unknown));
-                Assert.That(ResourceTypeExtensions.DetermineByFileExtension("."), Is.EqualTo(ResourceType.Unknown));
-                Assert.That(ResourceTypeExtensions.DetermineByFileExtension(""), Is.EqualTo(ResourceType.Unknown));
-                Assert.That(ResourceTypeExtensions.DetermineByFileExtension(null), Is.EqualTo(ResourceType.Unknown));
-            });
+                await Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".vcss_c")).IsEqualTo(ResourceType.PanoramaStyle);
+                await Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".vanim_c")).IsEqualTo(ResourceType.Animation);
+                await Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".vanim")).IsEqualTo(ResourceType.Animation);
+                await Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".vsmart_c")).IsEqualTo(ResourceType.SmartProp);
+                await Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".vanim_C")).IsEqualTo(ResourceType.Unknown);
+                await Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".anim")).IsEqualTo(ResourceType.Unknown);
+                await Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".anim_c")).IsEqualTo(ResourceType.Unknown);
+                await Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".")).IsEqualTo(ResourceType.Unknown);
+                await Assert.That(ResourceTypeExtensions.DetermineByFileExtension(".")).IsEqualTo(ResourceType.Unknown);
+                await Assert.That(ResourceTypeExtensions.DetermineByFileExtension("")).IsEqualTo(ResourceType.Unknown);
+                await Assert.That(ResourceTypeExtensions.DetermineByFileExtension(null)).IsEqualTo(ResourceType.Unknown);
+            }
+        }
+
+        [Test]
+        public async Task BlockTypesHaveCorrectFourCcValues()
+        {
+            var blockTypes = Enum.GetValues<BlockType>();
+
+            foreach (var blockType in blockTypes)
+            {
+                var enumName = Enum.GetName(blockType)!;
+
+                if (enumName == "Undefined")
+                {
+                    await Assert.That((uint)blockType).IsZero();
+                    continue;
+                }
+
+                var value = (uint)blockType;
+                var bytes = BitConverter.GetBytes(value);
+                var actualFourCc = Encoding.ASCII.GetString(bytes);
+
+                await Assert.That(enumName).IsEqualTo(actualFourCc);
+
+                var calculatedValue = 0u;
+                for (var i = 0; i < enumName.Length && i < 4; i++)
+                {
+                    calculatedValue |= (uint)(byte)enumName[i] << (i * 8);
+                }
+
+                await Assert.That(calculatedValue).IsEqualTo(value);
+            }
         }
     }
 }

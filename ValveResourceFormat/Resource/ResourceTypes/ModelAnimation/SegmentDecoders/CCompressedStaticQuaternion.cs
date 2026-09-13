@@ -1,7 +1,11 @@
 namespace ValveResourceFormat.ResourceTypes.ModelAnimation.SegmentDecoders
 {
-    public class CCompressedStaticQuaternion : AnimationSegmentDecoder
+    /// <summary>
+    /// Decodes static compressed quaternion data that doesn't change per frame.
+    /// </summary>
+    internal class CCompressedStaticQuaternion : AnimationSegmentDecoder
     {
+        /// <inheritdoc/>
         public override void Read(int frameIndex, Frame outFrame)
         {
             for (var i = 0; i < RemapTable.Length; i++)

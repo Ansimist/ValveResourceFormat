@@ -1,28 +1,22 @@
-using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
-using System.Windows.Forms;
-using GUI.Controls;
+using System.Threading.Tasks;
 using GUI.Utils;
-using ValveResourceFormat.ClosedCaptions;
 
 namespace GUI.Types.Viewers
 {
-    class ClosedCaptions : IViewer
+    class ClosedCaptions(VrfGuiContext vrfGuiContext) : IViewer, IDisposable
     {
+        private ValveResourceFormat.ClosedCaptions.ClosedCaptions? captions;
+
         public static bool IsAccepted(uint magic)
         {
             return magic == ValveResourceFormat.ClosedCaptions.ClosedCaptions.MAGIC;
         }
 
-        public TabPage Create(VrfGuiContext vrfGuiContext, Stream stream)
+        public async Task LoadAsync(Stream? stream)
         {
-            var tabOuterPage = new TabPage();
-            var tabControl = new TabControl
-            {
-                Dock = DockStyle.Fill,
-            };
-            tabOuterPage.Controls.Add(tabControl);
-            var captions = new ValveResourceFormat.ClosedCaptions.ClosedCaptions();
+            captions = new ValveResourceFormat.ClosedCaptions.ClosedCaptions();
 
             if (stream != null)
             {
@@ -32,27 +26,22 @@ namespace GUI.Types.Viewers
             {
                 captions.Read(vrfGuiContext.FileName);
             }
+        }
 
-            var tabPage = new TabPage("Captions");
-            var control = new DataGridView
-            {
-                Dock = DockStyle.Fill,
-                AutoSize = true,
-                ReadOnly = true,
-                AllowUserToAddRows = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                DataSource = new BindingSource(new BindingList<ClosedCaption>(captions.Captions), null),
-                ScrollBars = ScrollBars.Both,
-            };
-            tabPage.Controls.Add(control);
-            tabControl.Controls.Add(tabPage);
+        public ViewerContent GetContent()
+        {
+            Debug.Assert(captions is not null);
 
-            tabPage = new TabPage("Text");
-            var textControl = new CodeTextBox(captions.ToString());
-            tabPage.Controls.Add(textControl);
-            tabControl.Controls.Add(tabPage);
+            return new ViewerContent.Tabs(
+            [
+                new("Captions", new ViewerContent.Grid(captions.Captions)),
+                new("Text", new ViewerContent.Text(captions.ToString())),
+            ]);
+        }
 
-            return tabOuterPage;
+        public void Dispose()
+        {
+            //
         }
     }
 }

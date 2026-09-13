@@ -1,32 +1,29 @@
 using System.Windows.Forms;
-using GUI.Forms;
+using GUI.Utils;
 
 namespace GUI.Controls
 {
     public partial class WelcomeControl : UserControl
     {
-        public WelcomeControl()
+        internal WelcomeControl(ExplorerControl explorerControl)
         {
             InitializeComponent();
 
-            splitContainer.Panel2.Controls.Add(new ExplorerControl
-            {
-                Dock = DockStyle.Fill,
-            });
+            splitContainer.Panel2.Controls.Add(explorerControl);
         }
 
-        private void fileAssociationButton_Click(object sender, EventArgs e)
+        protected override void CreateHandle()
         {
-            SettingsForm.RegisterFileAssociation();
+            base.CreateHandle();
+
+            BackColor = Themer.CurrentThemeColors.AppMiddle;
+        }
+
+        private async void fileAssociationButton_Click(object sender, EventArgs e)
+        {
+            await SettingsControl.RegisterFileAssociationAsync().ConfigureAwait(true);
 
             fileAssociationButton.Text = "File association has been registered";
-        }
-
-        private void updateCheckButton_Click(object sender, EventArgs e)
-        {
-            UpdateAvailableForm.ToggleAutomaticUpdateCheck();
-
-            updateCheckButton.Text = "Automatic update checks have been enabled";
         }
     }
 }

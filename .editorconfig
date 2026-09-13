@@ -7,7 +7,7 @@ charset = utf-8
 trim_trailing_whitespace = true
 insert_final_newline = true
 
-[*.yml]
+[*.{yml,csproj,slnx,props}]
 indent_size = 2
 
 [*.cs]
@@ -22,6 +22,9 @@ dotnet_diagnostic.CA1003.severity = suggestion
 
 # CA1008: Enums should have zero value
 dotnet_diagnostic.CA1008.severity = none
+
+# CA1028: Enum Storage should be Int32
+dotnet_diagnostic.CA1028.severity = none
 
 # CA1010: Type directly or indirectly inherits 'ICollection' without implementing 'ICollection<T>'
 dotnet_diagnostic.CA1010.severity = none
@@ -38,17 +41,12 @@ dotnet_diagnostic.CA1062.severity = none
 # CA1303: Do not pass literals as localized parameters
 dotnet_diagnostic.CA1303.severity = none
 
-# CA1304: Specify CultureInfo
-dotnet_diagnostic.CA1304.severity = suggestion
-
 # CA1305: Specify IFormatProvider
-dotnet_diagnostic.CA1305.severity = suggestion
+# KVObject conversions are always invariant, the analyzer only sees that a provider overload exists
+dotnet_code_quality.CA1305.excluded_symbol_names = T:ValveKeyValue.KVObject
 
-# CA1307: Specify StringComparison
-dotnet_diagnostic.CA1307.severity = suggestion
-
-# CA1310: Specify StringComparison for correctness
-dotnet_diagnostic.CA1310.severity = suggestion
+# CA1307: Specify StringComparison (not part of the Recommended set used by Debug builds)
+dotnet_diagnostic.CA1307.severity = warning
 
 # CA1508: Avoid dead conditional code
 dotnet_diagnostic.CA1508.severity = none
@@ -85,9 +83,6 @@ dotnet_diagnostic.CA2008.severity = none
 
 # CA2119: Seal methods that satisfy private interfaces
 dotnet_diagnostic.CA2119.severity = none
-
-# CA2201: Do not raise reserved exception types
-dotnet_diagnostic.CA2201.severity = suggestion
 
 # CA2214: Do not call overridable methods in constructors
 dotnet_diagnostic.CA2214.severity = none
@@ -131,6 +126,12 @@ dotnet_diagnostic.CA1515.severity = none
 # WFO1000: Properties of classes derived from `Control` should have `DesignerSerializationVisibilityAttribute`
 dotnet_diagnostic.WFO1000.severity = none
 
+# CA1848: Use the LoggerMessage delegates
+dotnet_diagnostic.CA1848.severity = none
+
+# CA1873: Avoid potentially expensive logging
+dotnet_diagnostic.CA1873.severity = none
+
 #
 # Dotnet code style settings:
 #
@@ -169,20 +170,30 @@ dotnet_style_namespace_match_folder = false:silent
 
 # Newline settings
 csharp_new_line_before_open_brace = all
-csharp_new_line_before_else = true:suggestion
-csharp_new_line_before_catch = true:suggestion
-csharp_new_line_before_finally = true:suggestion
-csharp_new_line_before_members_in_object_initializers = true:suggestion
-csharp_new_line_before_members_in_anonymous_types = true:suggestion
-csharp_new_line_between_query_expression_clauses = true:suggestion
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_new_line_before_members_in_anonymous_types = true
+csharp_new_line_between_query_expression_clauses = true
 
 # Indentation preferences
-csharp_indent_block_contents = true:suggestion
-csharp_indent_braces = false:suggestion
-csharp_indent_case_contents = true:suggestion
-csharp_indent_case_contents_when_block = false:suggestion
-csharp_indent_switch_labels = true:suggestion
+csharp_indent_block_contents = true
+csharp_indent_braces = false
+csharp_indent_case_contents = true
+csharp_indent_case_contents_when_block = false
+csharp_indent_switch_labels = true
 csharp_indent_labels = flush_left
+
+# Whitespace options
+dotnet_style_allow_multiple_blank_lines_experimental = false
+csharp_style_allow_blank_lines_between_consecutive_braces_experimental = false
+csharp_style_allow_blank_line_after_colon_in_constructor_initializer_experimental = false
+csharp_style_allow_blank_line_after_token_in_conditional_expression_experimental = false
+dotnet_diagnostic.IDE2000.severity = warning
+dotnet_diagnostic.IDE2002.severity = warning
+dotnet_diagnostic.IDE2004.severity = warning
+dotnet_diagnostic.IDE2005.severity = warning
 
 # Prefer "var" everywhere
 csharp_style_var_for_built_in_types = true:suggestion
@@ -207,39 +218,40 @@ csharp_style_throw_expression = true:suggestion
 csharp_style_conditional_delegate_call = true:suggestion
 
 # Space preferences
-csharp_space_after_cast = false:suggestion
-csharp_space_after_colon_in_inheritance_clause = true:suggestion
-csharp_space_after_comma = true:suggestion
-csharp_space_after_dot = false:suggestion
-csharp_space_after_keywords_in_control_flow_statements = true:suggestion
-csharp_space_after_semicolon_in_for_statement = true:suggestion
+csharp_space_after_cast = false
+csharp_space_after_colon_in_inheritance_clause = true
+csharp_space_after_comma = true
+csharp_space_after_dot = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_space_after_semicolon_in_for_statement = true
 csharp_space_around_binary_operators = before_and_after
-csharp_space_around_declaration_statements = false:suggestion
-csharp_space_before_colon_in_inheritance_clause = true:suggestion
-csharp_space_before_comma = false:suggestion
-csharp_space_before_dot = false:suggestion
-csharp_space_before_open_square_brackets = false:suggestion
-csharp_space_before_semicolon_in_for_statement = false:suggestion
-csharp_space_between_empty_square_brackets = false:suggestion
-csharp_space_between_method_call_empty_parameter_list_parentheses = false:suggestion
-csharp_space_between_method_call_name_and_opening_parenthesis = false:suggestion
-csharp_space_between_method_call_parameter_list_parentheses = false:suggestion
-csharp_space_between_method_declaration_empty_parameter_list_parentheses = false:suggestion
-csharp_space_between_method_declaration_name_and_open_parenthesis = false:suggestion
-csharp_space_between_method_declaration_parameter_list_parentheses = false:suggestion
-csharp_space_between_parentheses = false:suggestion
-csharp_space_between_square_brackets = false:suggestion
+csharp_space_around_declaration_statements = false
+csharp_space_before_colon_in_inheritance_clause = true
+csharp_space_before_comma = false
+csharp_space_before_dot = false
+csharp_space_before_open_square_brackets = false
+csharp_space_before_semicolon_in_for_statement = false
+csharp_space_between_empty_square_brackets = false
+csharp_space_between_method_call_empty_parameter_list_parentheses = false
+csharp_space_between_method_call_name_and_opening_parenthesis = false
+csharp_space_between_method_call_parameter_list_parentheses = false
+csharp_space_between_method_declaration_empty_parameter_list_parentheses = false
+csharp_space_between_method_declaration_name_and_open_parenthesis = false
+csharp_space_between_method_declaration_parameter_list_parentheses = false
+csharp_space_between_parentheses = false
+csharp_space_between_square_brackets = false
 
 # Code style defaults
 csharp_using_directive_placement = outside_namespace:suggestion
-dotnet_sort_system_directives_first = true:suggestion
+dotnet_sort_system_directives_first = true
 csharp_prefer_braces = true:suggestion
-csharp_preserve_single_line_blocks = true:suggestion
-csharp_preserve_single_line_statements = false:suggestion
+csharp_preserve_single_line_blocks = true
+csharp_preserve_single_line_statements = true
 csharp_prefer_static_local_function = true:suggestion
+csharp_prefer_static_anonymous_function = true:suggestion
 csharp_prefer_simple_using_statement = true:suggestion
 csharp_style_prefer_switch_expression = true:suggestion
-csharp_style_namespace_declarations = block_scoped:silent
+csharp_style_namespace_declarations = file_scoped:silent
 csharp_style_prefer_method_group_conversion = true:silent
 csharp_style_prefer_top_level_statements = true:silent
 csharp_style_expression_bodied_lambdas = true:silent
@@ -260,6 +272,23 @@ dotnet_diagnostic.IDE1006.severity = none
 # IDE0290: Use primary constructor
 dotnet_diagnostic.IDE0290.severity = none
 
+# IDE0040: Add accessibility modifiers
+dotnet_diagnostic.IDE0040.severity = none
+
+# IDE0160 and IDE0161: Namespace declaration preferences
+dotnet_diagnostic.IDE0160.severity = none
+dotnet_diagnostic.IDE0161.severity = none
+
+dotnet_style_require_accessibility_modifiers = for_non_interface_members
+dotnet_style_parentheses_in_arithmetic_binary_operators = never_if_unnecessary
+dotnet_style_parentheses_in_relational_binary_operators = never_if_unnecessary
+dotnet_style_parentheses_in_other_binary_operators = never_if_unnecessary
+dotnet_style_parentheses_in_other_operators = never_if_unnecessary
+
 # Disable very slow analyzers - https://github.com/dotnet/roslyn-analyzers/issues/6737
 dotnet_diagnostic.CA5403.severity = none # Do not hard-code certificate
 dotnet_diagnostic.CA5390.severity = none # Do not hard-code encryption key
+
+# Test assemblies have no synchronization context to capture.
+[Tests/**.cs]
+dotnet_diagnostic.CA2007.severity = none # Consider calling ConfigureAwait on the awaited task

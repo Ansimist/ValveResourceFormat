@@ -1,40 +1,60 @@
 using System.IO;
-using NUnit.Framework;
+using System.Text;
+using System.Threading.Tasks;
 using ValveResourceFormat.FlexSceneFile;
+using ValveResourceFormat.IO;
 
 namespace Tests
 {
     public class FlexSceneFileTest
     {
         [Test]
-        public void TestFlexSceneFile()
+        public async Task ExtractProducesTextContentFile()
         {
-            var vfeFilePath = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "phonemes.vfe");
-            var vfe = new FlexSceneFile();
-            vfe.Read(vfeFilePath);
+            var vfeFilePath = Path.Combine(TestContext.TestDirectory!, "Files", "phonemes.vfe");
 
-            Assert.Multiple(() =>
+            await using var stream = File.OpenRead(vfeFilePath);
+            var extract = new FlexSceneExtract(stream);
+            using var contentFile = extract.ToContentFile();
+
+            var expected = await File.ReadAllTextAsync(Path.Combine(TestContext.TestDirectory!, "Files", "phonemes.txt"));
+
+            using (Assert.Multiple())
             {
-                Assert.That(vfe.Version, Is.EqualTo(0));
-                Assert.That(vfe.FlexSettings, Has.Length.EqualTo(48));
-                Assert.That(vfe.KeyNames, Has.Length.EqualTo(62));
-            });
+                await Assert.That(contentFile.FileName).IsEqualTo("phonemes.txt");
+                await Assert.That(Encoding.UTF8.GetString(contentFile.Data!).ReplaceLineEndings()).IsEqualTo(expected.ReplaceLineEndings());
+            }
         }
 
         [Test]
-        public void TestFlexSceneFileDecompile()
+        public async Task TestFlexSceneFile()
         {
-            var vfeFilePath = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "phonemes.vfe");
-            var vfeOutputFilePath = Path.Combine(TestContext.CurrentContext.TestDirectory, "Files", "phonemes.txt");
+            var vfeFilePath = Path.Combine(TestContext.TestDirectory!, "Files", "phonemes.vfe");
+            var vfe = new FlexSceneFile();
+            vfe.Read(vfeFilePath);
 
-            var expectedOutput = File.ReadAllText(vfeOutputFilePath).ReplaceLineEndings();
+            using (Assert.Multiple())
+            {
+                await Assert.That(vfe.Version).IsZero();
+                await Assert.That(vfe.FlexSettings).Count().IsEqualTo(48);
+                await Assert.That(vfe.KeyNames).Count().IsEqualTo(62);
+            }
+        }
+
+        [Test]
+        public async Task TestFlexSceneFileDecompile()
+        {
+            var vfeFilePath = Path.Combine(TestContext.TestDirectory!, "Files", "phonemes.vfe");
+            var vfeOutputFilePath = Path.Combine(TestContext.TestDirectory!, "Files", "phonemes.txt");
+
+            var expectedOutput = (await File.ReadAllTextAsync(vfeOutputFilePath)).ReplaceLineEndings();
 
             var vfe = new FlexSceneFile();
             vfe.Read(vfeFilePath);
 
             var actualOutput = vfe.ToString().ReplaceLineEndings();
 
-            Assert.That(actualOutput, Is.EqualTo(expectedOutput));
+            await Assert.That(actualOutput).IsEqualTo(expectedOutput);
         }
     }
 }

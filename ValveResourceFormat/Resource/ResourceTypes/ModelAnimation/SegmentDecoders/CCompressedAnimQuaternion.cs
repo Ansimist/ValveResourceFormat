@@ -1,7 +1,11 @@
 namespace ValveResourceFormat.ResourceTypes.ModelAnimation.SegmentDecoders
 {
-    public class CCompressedAnimQuaternion : AnimationSegmentDecoder
+    /// <summary>
+    /// Decodes compressed quaternion animation data.
+    /// </summary>
+    internal class CCompressedAnimQuaternion : AnimationSegmentDecoder
     {
+        /// <inheritdoc/>
         public override void Read(int frameIndex, Frame outFrame)
         {
             var offset = frameIndex * ElementCount;

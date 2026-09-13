@@ -1,8 +1,11 @@
 using System.IO;
 using System.Text;
 
-namespace ValveResourceFormat
+namespace ValveResourceFormat.ValveFont
 {
+    /// <summary>
+    /// Provides functionality to read Valve font files.
+    /// </summary>
 #pragma warning disable CA1822 // statics
     public class ValveFont
     {
@@ -10,8 +13,7 @@ namespace ValveResourceFormat
         private const byte MAGICTRICK = 167;
 
         /// <summary>
-        /// Opens and reads the given filename.
-        /// The file is held open until the object is disposed.
+        /// Opens and reads the given <paramref name="filename"/>.
         /// </summary>
         /// <param name="filename">The file to open and read.</param>
         public byte[] Read(string filename)

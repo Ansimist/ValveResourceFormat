@@ -3,13 +3,16 @@ using DMElement = Datamodel.Element;
 
 namespace ValveResourceFormat.IO.ContentFormats.ValveTexture;
 
+/// <summary>
+/// Root element of a texture content file (.vtex), describing the inputs and the output image to compile.
+/// </summary>
 [HungarianProperties]
-internal class CDmeVtex : DMElement
+public class CDmeVtex : DMElement
 {
     /// <summary>
     /// Array of <see cref="CDmeInputTexture"/> elements describing each input image.
     /// </summary>
-    public Datamodel.ElementArray InputTextureArray { get; set; } = [];
+    public Datamodel.ElementArray InputTextureArray { get; } = [];
 
     /// <summary>
     /// Type of texture to generate.
@@ -27,7 +30,14 @@ internal class CDmeVtex : DMElement
     [DMProperty(name: "m_outputClearColor")]
     public Vector4 OutputClearColor { get; set; } = Vector4.Zero;
 
+    /// <summary>
+    /// Gets or sets the minimum dimension for the output texture.
+    /// </summary>
     public int OutputMinDimension { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum dimension for the output texture.
+    /// </summary>
     public int OutputMaxDimension { get; set; }
 
     //[DMProperty(optional: true)]
@@ -35,7 +45,8 @@ internal class CDmeVtex : DMElement
 
     /// <summary>
     /// Array of <see cref="CDmeTextureOutputChannel"/> elements describing sets of output channels.
-    public Datamodel.ElementArray TextureOutputChannelArray { get; set; } = [];
+    /// </summary>
+    public Datamodel.ElementArray TextureOutputChannelArray { get; } = [];
 
     /// <summary>
     /// Whether to clamp the S, T and U coordinates respectively.
@@ -47,12 +58,15 @@ internal class CDmeVtex : DMElement
     /// </summary>
     public bool NoLod { get; set; }
 
-    /// <summary>
-    /// Marks the output file as a hidden asset.
-    /// </summary>
+    // <summary>
+    // Marks the output file as a hidden asset.
+    // </summary>
     //[DMProperty(optional: true)]
     //public bool HiddenAssetFlag { get; set; }
 
+    /// <summary>
+    /// Creates a 2D texture configuration from input images.
+    /// </summary>
     public static CDmeVtex CreateTexture2D((string FileName, string Channels, string MipAlgorithm)[] images, string outputFormat = "DXT1")
     {
         var vtex = new CDmeVtex
@@ -83,18 +97,31 @@ internal class CDmeVtex : DMElement
     }
 }
 
+/// <summary>
+/// Represents an input texture for compilation.
+/// </summary>
 [HungarianProperties]
 public class CDmeInputTexture : DMElement
 {
-    public new string Name { get; set; }
+    /// <summary>
+    /// Gets or sets the name of the input texture.
+    /// </summary>
+    public new string Name { get; set; } = string.Empty;
 
-    public string FileName { get; set; }
+    /// <summary>
+    /// Gets or sets the file name of the input texture.
+    /// </summary>
+    public string FileName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the color space of the input texture.
+    /// </summary>
     public string ColorSpace { get; set; } = "srgb";
 
     /*
     [DMProperty(name: "m_fileExt", optional: true)]
     public string FileExtension { get; set; } = string.Empty;
-    
+
     [DMProperty(optional: true)]
     public int MinBitsPerChannel { get; set; } = -1;
 
@@ -109,25 +136,68 @@ public class CDmeInputTexture : DMElement
     public int SliceHeight { get; set; } = -1;
     */
 
+    /// <summary>
+    /// Gets or sets the texture type.
+    /// </summary>
     public string TypeString { get; set; } = "2D";
+
+    /// <summary>
+    /// Gets the array of image processors to apply.
+    /// </summary>
     public Datamodel.ElementArray ImageProcessorArray { get; } = [];
 }
 
+/// <summary>
+/// Represents an output channel configuration for texture compilation.
+/// </summary>
 [HungarianProperties]
 public class CDmeTextureOutputChannel : DMElement
 {
+    /// <summary>
+    /// Gets the array of input texture names to use.
+    /// </summary>
     public Datamodel.StringArray InputTextureArray { get; } = [];
+
+    /// <summary>
+    /// Gets or sets the source channels to read from input textures.
+    /// </summary>
     public string SrcChannels { get; set; } = "rgba";
+
+    /// <summary>
+    /// Gets or sets the destination channels to write to output texture.
+    /// </summary>
     public string DstChannels { get; set; } = "rgba";
+
+    /// <summary>
+    /// Gets the mipmap generation algorithm configuration.
+    /// </summary>
     public CDmeImageProcessor MipAlgorithm { get; } = [];
+
+    /// <summary>
+    /// Gets or sets the output color space.
+    /// </summary>
     public string OutputColorSpace { get; set; } = "srgb";
 }
 
+/// <summary>
+/// Represents an image processing algorithm configuration.
+/// </summary>
 [HungarianProperties]
 public class CDmeImageProcessor : DMElement
 {
+    /// <summary>
+    /// Gets or sets the processing algorithm name.
+    /// </summary>
     public string Algorithm { get; set; } = "None";
+
+    /// <summary>
+    /// Gets or sets the string argument for the algorithm.
+    /// </summary>
     public string StringArg { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the float4 argument for the algorithm.
+    /// </summary>
     [DMProperty(name: "m_vFloat4Arg")]
     public Vector4 Float4Arg { get; set; } = Vector4.Zero;
 }

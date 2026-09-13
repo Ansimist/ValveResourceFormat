@@ -1,33 +1,46 @@
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
+using ValveKeyValue;
 using ValveResourceFormat.Blocks;
 using ValveResourceFormat.Serialization.KeyValues;
-using ValveResourceFormat.Utils;
 
 namespace ValveResourceFormat.ResourceTypes
 {
-    public class NTRO : ResourceData
+    /// <summary>
+    /// Represents a resource with introspection data.
+    /// </summary>
+    public class NTRO : Block
     {
-        public KVObject Output { get; private set; }
-        public string StructName { get; init; }
+        /// <summary>
+        /// Gets the output data.
+        /// </summary>
+        public KVObject Output { get; private set; } = null!;
+        /// <summary>
+        /// Gets the struct name.
+        /// </summary>
+        public string? StructName { get; init; }
 
-        private BinaryReader Reader;
-        private Resource Resource;
-        private ResourceIntrospectionManifest IntrospectionManifest;
+        private BinaryReader Reader => Resource.Reader!;
+        private ResourceIntrospectionManifest? IntrospectionManifest;
 
-        public override void Read(BinaryReader reader, Resource resource)
+        /// <inheritdoc/>
+        public override BlockType Type => BlockType.DATA;
+
+        /// <inheritdoc/>
+        public override void Read(BinaryReader reader)
         {
-            Reader = reader;
-            Resource = resource;
-            IntrospectionManifest = (ResourceIntrospectionManifest)resource.GetBlockByType(BlockType.NTRO);
+            IntrospectionManifest = (ResourceIntrospectionManifest?)Resource.GetBlockByType(BlockType.NTRO)
+                ?? throw new InvalidOperationException("Resource does not contain an NTRO block.");
 
             try
             {
                 if (StructName != null)
                 {
-                    var refStruct = IntrospectionManifest.ReferencedStructs.Find(s => s.Name == StructName);
+                    var refStruct = IntrospectionManifest.ReferencedStructs.Find(s => s.Name == StructName)
+                        ?? throw new InvalidOperationException($"Could not find struct '{StructName}' in introspection manifest.");
 
                     Output = ReadStructure(refStruct, Offset);
 
@@ -43,73 +56,69 @@ namespace ValveResourceFormat.ResourceTypes
             }
             finally
             {
-                Reader = null;
-                Resource = null;
                 IntrospectionManifest = null;
             }
         }
 
         private KVObject ReadStructure(ResourceIntrospectionManifest.ResourceDiskStruct refStruct, long startingOffset)
         {
-            var structEntry = new KVObject(refStruct.Name);
+            Debug.Assert(IntrospectionManifest != null);
 
-            foreach (var field in refStruct.FieldIntrospection)
+            var structEntry = KVObject.Collection();
+
+            ReadStructureFields(refStruct, startingOffset, structEntry);
+
+            // Valve doesn't print the base struct's type, so we can't just call ReadStructure *sigh*
+            // Inheritance can be arbitrarily deep, and every ancestor lays its fields out at offsets
+            // relative to the same object, so keep appending fields while walking up the chain.
+            // The depth limit guards against manifests with an inheritance cycle.
+            var baseStructId = refStruct.BaseStructId;
+
+            for (var depth = 0; baseStructId != 0 && depth < 16; depth++)
             {
-                Reader.BaseStream.Position = startingOffset + field.OnDiskOffset;
+                var baseStruct = IntrospectionManifest.GetStructById(baseStructId);
 
-                ReadFieldIntrospection(field, structEntry);
+                if (baseStruct == null)
+                {
+                    break;
+                }
+
+                ReadStructureFields(baseStruct, startingOffset, structEntry);
+
+                baseStructId = baseStruct.BaseStructId;
             }
 
             // Some structs are padded, so all the field sizes do not add up to the size on disk
             Reader.BaseStream.Position = startingOffset + refStruct.DiskSize;
 
-            if (refStruct.BaseStructId != 0)
+            return structEntry;
+        }
+
+        private void ReadStructureFields(ResourceIntrospectionManifest.ResourceDiskStruct refStruct, long startingOffset, KVObject structEntry)
+        {
+            foreach (var field in refStruct.FieldIntrospection)
             {
-                var previousOffset = Reader.BaseStream.Position;
-
-                var newStruct = IntrospectionManifest.ReferencedStructs.First(x => x.Id == refStruct.BaseStructId);
-
-                // Valve doesn't print this struct's type, so we can't just call ReadStructure *sigh*
-                foreach (var field in newStruct.FieldIntrospection)
+                // A negative offset (-1) means this field is not serialized to disk, there is nothing to read
+                if (field.OnDiskOffset < 0)
                 {
-                    Reader.BaseStream.Position = startingOffset + field.OnDiskOffset;
-
-                    ReadFieldIntrospection(field, structEntry);
+                    continue;
                 }
 
-                Reader.BaseStream.Position = previousOffset;
-            }
+                Reader.BaseStream.Position = startingOffset + field.OnDiskOffset;
 
-            return structEntry;
+                ReadFieldIntrospection(field, structEntry);
+            }
         }
 
         private void ReadFieldIntrospection(ResourceIntrospectionManifest.ResourceDiskStruct.Field field, KVObject structEntry)
         {
-            var count = (uint)field.Count;
-            var indirection = SchemaIndirectionType.Unknown;
-
-            if (count == 0)
-            {
-                count = 1;
-            }
+            var count = field.Count > 0 ? (uint)field.Count : 1;
 
             long prevOffset = 0;
 
-            if (field.Indirections.Count > 0)
+            if (field.Indirections.Count == 1)
             {
-                // TODO
-                if (field.Indirections.Count > 1)
-                {
-                    throw new NotImplementedException("More than one indirection, not yet handled.");
-                }
-
-                // TODO
-                if (field.Count > 0)
-                {
-                    throw new NotImplementedException("Indirection.Count > 0 && field.Count > 0");
-                }
-
-                indirection = (SchemaIndirectionType)field.Indirections[0]; // TODO: depth needs fixing?
+                var indirection = (SchemaIndirectionType)field.Indirections[0];
 
                 var offset = Reader.ReadUInt32();
 
@@ -117,7 +126,7 @@ namespace ValveResourceFormat.ResourceTypes
                 {
                     if (offset == 0)
                     {
-                        structEntry.AddProperty(field.FieldName, new KVValue(KVType.NULL, null)); // :shrug:
+                        structEntry.Add(field.FieldName, KVObject.Null()); // :shrug:
 
                         return;
                     }
@@ -142,10 +151,66 @@ namespace ValveResourceFormat.ResourceTypes
                     throw new UnexpectedMagicException("Unsupported indirection", (int)indirection, nameof(indirection));
                 }
             }
+            else if (field.Indirections.Count == 2)
+            {
+                var indirection0 = (SchemaIndirectionType)field.Indirections[0];
+                var indirection1 = (SchemaIndirectionType)field.Indirections[1];
 
-            KVValue fieldValue = null;
+                if (indirection0 == SchemaIndirectionType.ResourceArray && indirection1 == SchemaIndirectionType.ResourcePointer)
+                {
+                    var arrayOffset = Reader.ReadUInt32();
+                    var arrayCount = Reader.ReadUInt32();
 
-            if (field.Count > 0 || indirection == SchemaIndirectionType.ResourceArray)
+                    prevOffset = Reader.BaseStream.Position;
+
+                    if (arrayCount == 0)
+                    {
+                        structEntry.Add(field.FieldName, KVObject.Array());
+                        return;
+                    }
+
+                    Reader.BaseStream.Position += arrayOffset - 8;
+
+                    // Array of pointers
+                    var arrayValues = KVObject.Array();
+
+                    for (var i = 0; i < arrayCount; i++)
+                    {
+                        var pointerOffset = Reader.ReadUInt32();
+
+                        if (pointerOffset == 0)
+                        {
+                            arrayValues.Add(KVObject.Null());
+                        }
+                        else
+                        {
+                            var pointerPrevOffset = Reader.BaseStream.Position;
+                            Reader.BaseStream.Position += pointerOffset - 4;
+
+                            arrayValues.Add(ReadField(field));
+
+                            Reader.BaseStream.Position = pointerPrevOffset;
+                        }
+                    }
+
+                    structEntry.Add(field.FieldName, arrayValues);
+                    Reader.BaseStream.Position = prevOffset;
+
+                    return;
+                }
+                else
+                {
+                    throw new NotImplementedException($"Unsupported 2-level indirection: {indirection0}, {indirection1}");
+                }
+            }
+            else if (field.Indirections.Count > 2)
+            {
+                throw new NotImplementedException($"More than 2 levels of indirection not supported (found {field.Indirections.Count})");
+            }
+
+            KVObject fieldValue;
+
+            if (field.Count > 0 || field.Indirections.Count == 1 && (SchemaIndirectionType)field.Indirections[0] == SchemaIndirectionType.ResourceArray)
             {
                 if (field.Type == SchemaFieldType.Byte || field.Type == SchemaFieldType.Color)
                 {
@@ -157,28 +222,27 @@ namespace ValveResourceFormat.ResourceTypes
                     };
 
                     //special case for byte arrays for faster access
-                    fieldValue = new KVValue(KVType.BINARY_BLOB, Reader.ReadBytes((int)count / size));
+                    fieldValue = KVObject.Blob(Reader.ReadBytes((int)count * size));
                 }
                 else
                 {
                     //var ntroValues = new NTROArray(field.Type, (int)count, pointer, field.Indirections.Count > 0);
-                    var ntroValues = new KVObject(field.FieldName, isArray: true, capacity: (int)count);
+                    var ntroValues = KVObject.Array();
 
                     for (var i = 0; i < count; i++)
                     {
-                        ntroValues.AddProperty(null, ReadField(field));
+                        ntroValues.Add(ReadField(field));
                     }
 
-                    fieldValue = new KVValue(KVType.ARRAY, ntroValues);
+                    fieldValue = ntroValues;
                 }
             }
             else
             {
-                Debug.Assert(count == 1 && field.Count == 0);
                 fieldValue = ReadField(field);
             }
 
-            structEntry.AddProperty(field.FieldName, fieldValue);
+            structEntry.Add(field.FieldName, fieldValue);
 
             if (prevOffset > 0)
             {
@@ -186,44 +250,60 @@ namespace ValveResourceFormat.ResourceTypes
             }
         }
 
-        private KVValue ReadField(ResourceIntrospectionManifest.ResourceDiskStruct.Field field)
+        private KVObject ReadField(ResourceIntrospectionManifest.ResourceDiskStruct.Field field)
         {
+            Debug.Assert(IntrospectionManifest != null);
+
             switch (field.Type)
             {
                 case SchemaFieldType.Struct:
                     var newStruct = IntrospectionManifest.ReferencedStructs.First(x => x.Id == field.TypeData);
-                    return BinaryKV3.MakeValue(KVType.OBJECT, ReadStructure(newStruct, Reader.BaseStream.Position));
+                    return ReadStructure(newStruct, Reader.BaseStream.Position);
 
                 case SchemaFieldType.Enum:
-                    // TODO: Lookup in ReferencedEnums
-                    return BinaryKV3.MakeValue(KVType.UINT32, Reader.ReadUInt32());
+                {
+                    // The type data is the hash of the enum name, which is what the enum introspection is keyed by
+                    var enumValue = Reader.ReadInt32();
+                    var enumeratorName = IntrospectionManifest.GetEnumValueName(field.TypeData, enumValue);
+
+                    if (enumeratorName != null)
+                    {
+                        return enumeratorName;
+                    }
+
+                    // Flag combinations and values the manifest does not name stay numeric
+                    return enumValue;
+                }
 
                 case SchemaFieldType.SByte:
-                    return BinaryKV3.MakeValue(KVType.INT32, (int)Reader.ReadSByte());
+                    return (int)Reader.ReadSByte();
 
                 case SchemaFieldType.Byte:
-                    return BinaryKV3.MakeValue(KVType.UINT32, (uint)Reader.ReadByte());
+                    return (uint)Reader.ReadByte();
 
                 case SchemaFieldType.Boolean:
-                    return BinaryKV3.MakeValue(KVType.BOOLEAN, Reader.ReadBoolean());
+                    return Reader.ReadBoolean();
 
                 case SchemaFieldType.Int16:
-                    return BinaryKV3.MakeValue(KVType.INT32, (int)Reader.ReadInt16());
+                    return (int)Reader.ReadInt16(); // TODO: Could actually be int16
 
                 case SchemaFieldType.UInt16:
-                    return BinaryKV3.MakeValue(KVType.UINT32, (uint)Reader.ReadUInt16());
+                    return (uint)Reader.ReadUInt16(); // TODO: Could actually be uint16
 
+                case SchemaFieldType.Int:
                 case SchemaFieldType.Int32:
-                    return BinaryKV3.MakeValue(KVType.INT32, Reader.ReadInt32());
+                    return Reader.ReadInt32();
 
+                case SchemaFieldType.UInt:
                 case SchemaFieldType.UInt32:
-                    return BinaryKV3.MakeValue(KVType.UINT32, Reader.ReadUInt32());
+                    return (uint)Reader.ReadUInt32();
 
+                case SchemaFieldType.Float_8:
                 case SchemaFieldType.Float:
-                    return BinaryKV3.MakeValue(KVType.FLOAT, (double)Reader.ReadSingle());
+                    return (double)Reader.ReadSingle(); // TODO: Could actually be float
 
                 case SchemaFieldType.Int64:
-                    return BinaryKV3.MakeValue(KVType.INT64, Reader.ReadInt64());
+                    return Reader.ReadInt64();
 
                 case SchemaFieldType.ExternalReference:
                     var id = Reader.ReadUInt64();
@@ -233,101 +313,135 @@ namespace ValveResourceFormat.ResourceTypes
 
                     if (value == null)
                     {
-                        return BinaryKV3.MakeValue(KVType.NULL, null);
+                        return KVObject.Null();
                     }
 
-                    return BinaryKV3.MakeValue(KVType.STRING, value, KVFlag.ResourceName);
+                    KVObject resourceNameValue = value;
+                    resourceNameValue.Flag = KVFlag.ResourceName;
+                    return resourceNameValue;
 
                 case SchemaFieldType.UInt64:
-                    return BinaryKV3.MakeValue(KVType.UINT64, Reader.ReadUInt64());
+                    return (ulong)Reader.ReadUInt64();
 
                 case SchemaFieldType.Vector3D:
-                    {
-                        var arrayObject = new KVObject(field.Type.ToString(), isArray: true);
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        return BinaryKV3.MakeValue(KVType.ARRAY, arrayObject);
-                    }
+                case SchemaFieldType.QAngle:
+                {
+                    var arrayObject = KVObject.Array();
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    return arrayObject;
+                }
 
                 case SchemaFieldType.Quaternion:
                 case SchemaFieldType.Fltx4:
                 case SchemaFieldType.Vector4D:
+                {
+                    var arrayObject = KVObject.Array();
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    return arrayObject;
+                }
+
                 case SchemaFieldType.FourVectors:
+                {
+                    // Three fltx4 laid out as x[4], y[4], z[4], which is four vectors in structure of arrays form
+                    Span<float> components = stackalloc float[12];
+                    Reader.BaseStream.ReadExactly(MemoryMarshal.AsBytes(components));
+
+                    var arrayObject = KVObject.Array();
+
+                    for (var i = 0; i < 4; i++)
                     {
-                        var arrayObject = new KVObject(field.Type.ToString(), isArray: true);
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        return BinaryKV3.MakeValue(KVType.ARRAY, arrayObject);
+                        var vector = KVObject.Array();
+                        vector.Add(components[i]);
+                        vector.Add(components[4 + i]);
+                        vector.Add(components[8 + i]);
+                        arrayObject.Add(vector);
                     }
+
+                    return arrayObject;
+                }
 
                 case SchemaFieldType.Color:
-                    {
-                        var arrayObject = new KVObject(field.Type.ToString(), isArray: true);
-                        arrayObject.AddProperty(null, BinaryKV3.MakeValue(KVType.INT32, (int)Reader.ReadByte()));
-                        arrayObject.AddProperty(null, BinaryKV3.MakeValue(KVType.INT32, (int)Reader.ReadByte()));
-                        arrayObject.AddProperty(null, BinaryKV3.MakeValue(KVType.INT32, (int)Reader.ReadByte()));
-                        arrayObject.AddProperty(null, BinaryKV3.MakeValue(KVType.INT32, (int)Reader.ReadByte()));
-                        return BinaryKV3.MakeValue(KVType.ARRAY, arrayObject);
-                    }
+                {
+                    var arrayObject = KVObject.Array();
+                    arrayObject.Add((int)Reader.ReadByte());
+                    arrayObject.Add((int)Reader.ReadByte());
+                    arrayObject.Add((int)Reader.ReadByte());
+                    arrayObject.Add((int)Reader.ReadByte());
+                    return arrayObject;
+                }
 
                 case SchemaFieldType.Char:
-                    return BinaryKV3.MakeValue(KVType.STRING, Reader.ReadOffsetString(Encoding.UTF8));
+                    return Reader.ReadOffsetString(Encoding.UTF8);
 
                 case SchemaFieldType.ResourceString:
-                    return BinaryKV3.MakeValue(KVType.STRING, Reader.ReadOffsetString(Encoding.UTF8));
+                    KVObject resourceValue = Reader.ReadOffsetString(Encoding.UTF8);
+                    resourceValue.Flag = KVFlag.Resource;
+                    return resourceValue;
 
                 case SchemaFieldType.Vector2D:
-                    {
-                        var arrayObject = new KVObject(field.Type.ToString(), isArray: true);
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        return BinaryKV3.MakeValue(KVType.ARRAY, arrayObject);
-                    }
+                {
+                    var arrayObject = KVObject.Array();
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    return arrayObject;
+                }
 
                 case SchemaFieldType.Matrix3x4:
                 case SchemaFieldType.Matrix3x4a:
-                    {
-                        var arrayObject = new KVObject(field.Type.ToString(), isArray: true);
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        return BinaryKV3.MakeValue(KVType.ARRAY, arrayObject);
-                    }
+                {
+                    var arrayObject = KVObject.Array();
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    return arrayObject;
+                }
 
                 case SchemaFieldType.Transform:
-                    {
-                        var arrayObject = new KVObject(field.Type.ToString(), isArray: true);
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        arrayObject.AddProperty(null, new KVValue(KVType.FLOAT, Reader.ReadSingle()));
-                        return BinaryKV3.MakeValue(KVType.ARRAY, arrayObject);
-                    }
+                {
+                    var arrayObject = KVObject.Array();
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    arrayObject.Add(Reader.ReadSingle());
+                    return arrayObject;
+                }
 
                 default:
                     throw new NotImplementedException($"Unknown data type: {field.Type} (name: {field.FieldName})");
             }
         }
 
-        public override string ToString()
+        /// <inheritdoc/>
+        public override void Serialize(Stream stream)
         {
-            return new KV3File(Output).ToString() ?? "Nope.";
+            throw new NotImplementedException("Serializing this block is not yet supported. If you need this, send us a pull request!");
+        }
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Converts this <see cref="NTRO"/> block's data to KV3 format and writes it as text.
+        /// </remarks>
+        public override void WriteText(IndentedTextWriter writer)
+        {
+            Output.ToKV3Document().WriteKV3Text(writer);
         }
     }
 }

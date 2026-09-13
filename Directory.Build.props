@@ -1,6 +1,9 @@
 <Project>
   <PropertyGroup>
-    <ProjectBaseVersion>10.2</ProjectBaseVersion>
+    <!-- The SDK version is pinned in global.json -->
+    <TargetFramework>net10.0</TargetFramework>
+
+    <ProjectBaseVersion>20.0</ProjectBaseVersion>
     <ProjectVersion Condition="'$(GITHUB_RUN_NUMBER)' != ''">$(ProjectBaseVersion).$(GITHUB_RUN_NUMBER)</ProjectVersion>
     <ProjectVersion Condition="'$(GITHUB_RUN_NUMBER)' == ''">$(ProjectBaseVersion).0</ProjectVersion>
     <DefineConstants Condition="'$(GITHUB_REF_TYPE)' == 'tag'">$(DefineConstants);CI_RELEASE_BUILD</DefineConstants>
@@ -19,14 +22,17 @@
     <Deterministic>true</Deterministic>
     <DebugSymbols>true</DebugSymbols>
     <DebugType>embedded</DebugType>
-    <PublishSingleFile>true</PublishSingleFile>
     <PublishReadyToRun>true</PublishReadyToRun>
     <NeutralLanguage>en</NeutralLanguage>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
-    <AnalysisMode>AllEnabledByDefault</AnalysisMode>
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
+    <AnalysisMode Condition="'$(Configuration)' == 'Release'">All</AnalysisMode>
+    <AnalysisMode Condition="'$(Configuration)' != 'Release'">Recommended</AnalysisMode>
+    <EnforceCodeStyleInBuild Condition="'$(Configuration)' == 'Release'">true</EnforceCodeStyleInBuild>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -34,8 +40,13 @@
     <Copyright>Copyright © ValveResourceFormat Contributors</Copyright>
     <RepositoryUrl>https://github.com/ValveResourceFormat/ValveResourceFormat</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <PackageProjectUrl>https://valveresourceformat.github.io/</PackageProjectUrl>
+    <PackageProjectUrl>https://s2v.app/</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' != 'Release'">
+    <!-- CA2000 is very slow: https://github.com/dotnet/roslyn-analyzers/issues/4915 -->
+    <NoWarn>$(NoWarn);CA2000</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

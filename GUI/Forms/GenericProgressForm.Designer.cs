@@ -1,3 +1,5 @@
+using GUI.Controls;
+
 namespace GUI.Forms
 {
     partial class GenericProgressForm
@@ -18,10 +20,10 @@ namespace GUI.Forms
                 components.Dispose();
             }
 
-            if (disposing && cancellationTokenSource != null)
+            if (disposing)
             {
                 cancellationTokenSource.Dispose();
-                cancellationTokenSource = null;
+                updateTimer.Dispose();
             }
 
             base.Dispose(disposing);
@@ -38,7 +40,7 @@ namespace GUI.Forms
             tableLayoutPanel1 = new System.Windows.Forms.TableLayoutPanel();
             extractProgressBar = new System.Windows.Forms.ProgressBar();
             extractStatusLabel = new System.Windows.Forms.Label();
-            cancelButton = new System.Windows.Forms.Button();
+            cancelButton = new ThemedButton();
             tableLayoutPanel1.SuspendLayout();
             SuspendLayout();
             // 

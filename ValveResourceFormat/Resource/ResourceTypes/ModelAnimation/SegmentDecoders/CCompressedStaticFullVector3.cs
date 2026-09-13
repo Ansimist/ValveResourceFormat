@@ -2,8 +2,12 @@ using System.Runtime.InteropServices;
 
 namespace ValveResourceFormat.ResourceTypes.ModelAnimation.SegmentDecoders
 {
-    public class CCompressedStaticFullVector3 : AnimationSegmentDecoder
+    /// <summary>
+    /// Decodes static full-precision Vector3 data that doesn't change per frame.
+    /// </summary>
+    internal class CCompressedStaticFullVector3 : AnimationSegmentDecoder
     {
+        /// <inheritdoc/>
         public override void Read(int frameIndex, Frame outFrame)
         {
             var vectorData = MemoryMarshal.Cast<byte, Vector3>(Data);

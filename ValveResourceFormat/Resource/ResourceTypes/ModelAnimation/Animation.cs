@@ -1,327 +1,221 @@
-using System.Linq;
-using System.Runtime.InteropServices;
-using ValveResourceFormat.ResourceTypes.ModelAnimation.SegmentDecoders;
-using ValveResourceFormat.ResourceTypes.ModelFlex;
-using ValveResourceFormat.Serialization;
-using ValveResourceFormat.Serialization.KeyValues;
-
 namespace ValveResourceFormat.ResourceTypes.ModelAnimation
 {
-    public class Animation
+    /// <summary>
+    /// Represents a model animation that can be sampled per frame.
+    /// </summary>
+    public abstract class Animation
     {
-        public string Name { get; }
-        public float Fps { get; }
-        public int FrameCount { get; }
-        public bool IsLooping { get; }
-        public bool Hidden { get; init; }
-        public bool Delta { get; init; }
-        public bool Worldspace { get; init; }
-        private AnimationFrameBlock[] FrameBlocks { get; }
-        private AnimationSegmentDecoder[] SegmentArray { get; }
-        public AnimationMovement[] Movements { get; }
-        public AnimationEvent[] Events { get; }
-        public AnimationActivity[] Activities { get; }
-        public AnimationSequenceParams SequenceParams { get; }
+        /// <summary>
+        /// Gets the name of the animation.
+        /// </summary>
+        public string Name { get; protected init; } = string.Empty;
 
-        private Animation(KVObject animDesc, AnimationSegmentDecoder[] segmentArray)
+        /// <summary>
+        /// Gets the frames per second of the animation.
+        /// </summary>
+        public float Fps { get; protected init; }
+
+        /// <summary>
+        /// Gets the total number of frames in the animation.
+        /// </summary>
+        public int FrameCount { get; protected init; }
+
+        /// <summary>
+        /// Gets the duration of the animation in seconds, which is also the period looping playback wraps around.
+        /// </summary>
+        public virtual float Duration => CycleDuration;
+
+        /// <summary>
+        /// Gets the number of frame intervals one playback cycle spans. Looping wraps over the intervals
+        /// between samples, so the last frame is where the next cycle starts rather than a sample of its own.
+        /// </summary>
+        public int CycleFrames => FrameCount - 1;
+
+        /// <summary>
+        /// Gets the length of one playback cycle in seconds, the period looping wraps around. Zero when the
+        /// animation is a single pose or carries no frame rate.
+        /// </summary>
+        public float CycleDuration => CycleFrames > 0 && Fps > 0f ? CycleFrames / Fps : 0f;
+
+        /// <summary>
+        /// Splits a playback time into the number of whole cycles already played, the frame reached within the
+        /// current one, and how far past that frame the time sits. Everything that samples an animation over
+        /// time goes through this, so the pose, the root motion and the loop counting cannot drift apart.
+        /// </summary>
+        /// <remarks>
+        /// The frame is relative to the current cycle, and stops one short of <see cref="CycleFrames"/> so the
+        /// frame after it is always a valid sample to interpolate towards; the remainder reaches one at the end.
+        /// A cycle owns the moment it ends, so a clip parked on its end holds its last frame rather than
+        /// reading as frame zero of a cycle it never entered.
+        /// </remarks>
+        public (int Cycle, int Frame, float Remainder) GetCyclePosition(float time)
         {
-            // Get animation properties
-            Name = animDesc.GetProperty<string>("m_name");
-            Fps = animDesc.GetFloatProperty("fps");
-            SegmentArray = segmentArray;
+            var cycleDuration = CycleDuration;
 
-            var flags = animDesc.GetSubCollection("m_flags");
-            IsLooping = flags.GetProperty<bool>("m_bLooping");
-            Hidden = flags.GetProperty<bool>("m_bHidden");
-            Delta = flags.GetProperty<bool>("m_bDelta");
-            Worldspace = flags.GetProperty<bool>("m_bLegacyWorldspace");
-
-            var pDataObject = animDesc.GetProperty<object>("m_pData");
-            var pData = pDataObject as KVObject;
-            FrameCount = pData.GetInt32Property("m_nFrames");
-
-            var frameBlockArray = pData.GetArray("m_frameblockArray");
-            FrameBlocks = new AnimationFrameBlock[frameBlockArray.Length];
-            for (var i = 0; i < frameBlockArray.Length; i++)
+            if (cycleDuration <= 0f)
             {
-                FrameBlocks[i] = new AnimationFrameBlock(frameBlockArray[i]);
+                return (0, 0, 0f);
             }
 
-            var movementArray = animDesc.GetArray("m_movementArray");
-            Movements = new AnimationMovement[movementArray.Length];
-            for (var i = 0; i < movementArray.Length; i++)
-            {
-                Movements[i] = new AnimationMovement(movementArray[i]);
-            }
+            var cycle = time > 0f ? (int)MathF.Ceiling(time / cycleDuration) - 1 : 0;
+            var position = (time - cycle * cycleDuration) * Fps;
 
-            Events = animDesc.GetArray("m_eventArray")
-                                 .Select(x => new AnimationEvent(x))
-                                 .ToArray();
+            var frame = Math.Min((int)position, CycleFrames - 1);
 
-            Activities = animDesc.GetArray("m_activityArray")
-                                    .Select(x => new AnimationActivity(x))
-                                    .ToArray();
-
-            var sequenceParams = animDesc.GetSubCollection("m_sequenceParams");
-            SequenceParams = new AnimationSequenceParams(sequenceParams);
-        }
-
-        public static IEnumerable<Animation> FromData(KVObject animationData, KVObject decodeKey,
-            Skeleton skeleton, FlexController[] flexControllers)
-        {
-            var animArray = animationData.GetArray<KVObject>("m_animArray");
-
-            if (animArray.Length == 0)
-            {
-                return [];
-            }
-
-            var decoderArrayKV = animationData.GetArray("m_decoderArray");
-            var decoderArray = new string[decoderArrayKV.Length];
-            for (var i = 0; i < decoderArrayKV.Length; i++)
-            {
-                decoderArray[i] = decoderArrayKV[i].GetProperty<string>("m_szName");
-            }
-
-            //var channelElements = decodeKey.GetInt32Property("m_nChannelElements");
-            var dataChannelArrayKV = decodeKey.GetArray("m_dataChannelArray");
-            var dataChannelArray = new AnimationDataChannel[dataChannelArrayKV.Length];
-            for (var i = 0; i < dataChannelArrayKV.Length; i++)
-            {
-                dataChannelArray[i] = new AnimationDataChannel(skeleton, flexControllers, dataChannelArrayKV[i]);
-            }
-
-            var segmentArrayKV = animationData.GetArray("m_segmentArray");
-            var segmentArray = new AnimationSegmentDecoder[segmentArrayKV.Length];
-            for (var i = 0; i < segmentArrayKV.Length; i++)
-            {
-                var segmentKV = segmentArrayKV[i];
-                var container = segmentKV.GetArray<byte>("m_container");
-                var containerSpan = container.AsSpan();
-                var localChannel = dataChannelArray[segmentKV.GetInt32Property("m_nLocalChannel")];
-
-                // Read header
-                var decoder = decoderArray[BitConverter.ToInt16(containerSpan[0..2])];
-                //var cardinality = BitConverter.ToInt16(containerSpan[2..4]);
-                var numElements = BitConverter.ToInt16(containerSpan[4..6]);
-                //var totalLength = BitConverter.ToInt16(containerSpan[6..8]);
-
-                // Read bone list
-                var end = 8 + numElements * 2;
-                var elements = MemoryMarshal.Cast<byte, short>(containerSpan[8..end]);
-                var remapTable = new int[localChannel.RemapTable.Length];
-
-                for (var j = 0; j < remapTable.Length; j++)
-                {
-                    remapTable[j] = elements.IndexOf((short)localChannel.RemapTable[j]);
-                }
-
-                var wantedElements = remapTable.Where(boneID => boneID != -1).ToArray();
-                remapTable = remapTable
-                    .Select((boneID, i) => (boneID, i))
-                    .Where(t => t.boneID != -1)
-                    .Select(t => t.i)
-                    .ToArray();
-
-                if (localChannel.Attribute == AnimationChannelAttribute.Unknown)
-                {
-                    Console.Error.WriteLine($"Unknown channel attribute encountered with '{decoder}' decoder");
-                    continue;
-                }
-
-                var containerSegment = new ArraySegment<byte>(container, end, container.Length - end);
-
-                // Look at the decoder to see what to read
-                segmentArray[i] = decoder switch
-                {
-                    nameof(CCompressedStaticFullVector3) => new CCompressedStaticFullVector3(),
-                    nameof(CCompressedStaticVector3) => new CCompressedStaticVector3(),
-                    nameof(CCompressedStaticQuaternion) => new CCompressedStaticQuaternion(),
-                    nameof(CCompressedStaticFloat) => new CCompressedStaticFloat(),
-
-                    nameof(CCompressedFullVector3) => new CCompressedFullVector3(),
-                    nameof(CCompressedDeltaVector3) => new CCompressedDeltaVector3(),
-                    nameof(CCompressedAnimVector3) => new CCompressedAnimVector3(),
-                    nameof(CCompressedAnimQuaternion) => new CCompressedAnimQuaternion(),
-                    nameof(CCompressedFullQuaternion) => new CCompressedFullQuaternion(),
-                    nameof(CCompressedFullFloat) => new CCompressedFullFloat(),
-                    _ => null,
-                };
-
-                if (segmentArray[i] != null)
-                {
-                    segmentArray[i].Initialize(containerSegment, wantedElements, remapTable, localChannel.Attribute, numElements);
-                    continue;
-                }
-
-#if DEBUG
-                Console.WriteLine($"Unhandled animation bone decoder type '{decoder}' for attribute '{localChannel.Attribute}'");
-#endif            
-            }
-
-            return animArray
-                .Select(anim => new Animation(anim, segmentArray))
-                .ToArray();
-        }
-
-        public static IEnumerable<Animation> FromResource(Resource resource, KVObject decodeKey, Skeleton skeleton, FlexController[] flexControllers)
-            => FromData(GetAnimationData(resource), decodeKey, skeleton, flexControllers);
-
-        private static KVObject GetAnimationData(Resource resource)
-            => resource.DataBlock.AsKeyValueCollection();
-
-        private int GetMovementIndexForTime(float time)
-        {
-            var frame = (int)MathF.Floor(time * Fps);
-            return GetMovementIndexForFrame(frame);
-        }
-
-        private int GetMovementIndexForFrame(int frame)
-        {
-            for (var i = 0; i < Movements.Length; i++)
-            {
-                var movement = Movements[i];
-                if (movement.EndFrame > frame)
-                {
-                    return i;
-                }
-            }
-            return Movements.Length - 1;
-        }
-
-        public bool HasMovementData()
-        {
-            return Movements.Length > 0;
+            return (cycle, frame, position - frame);
         }
 
         /// <summary>
-        /// Returns interpolated root motion data
+        /// The playback time of the whole frame nearest <paramref name="time"/>, staying in the cycle being
+        /// played. Sampling an exact frame rather than interpolating moves playback by up to half a frame, and
+        /// this is what says where to.
         /// </summary>
-        public AnimationMovement.MovementData GetMovementOffsetData(float time)
+        public float SnapTimeToFrame(float time)
         {
-            if (!HasMovementData())
+            if (CycleDuration <= 0f)
             {
-                return new();
+                return time;
             }
 
-            GetMovementForTime(time, out var movement, out var nextMovement, out var t);
-            return AnimationMovement.Lerp(movement, nextMovement, t);
+            var (cycle, frame, remainder) = GetCyclePosition(time);
+
+            return cycle * CycleDuration + (remainder < 0.5f ? frame : frame + 1) / Fps;
         }
 
         /// <summary>
-        /// Returns root motion data at the specified animation time for interpolation.
+        /// Gets or sets whether this animation is additive: its frames are per-bone deltas meant to be
+        /// composed over a base pose. AG2 clips and AG1 sequences both carry what their own data says; the
+        /// owning model then adds the sequences its AG1 graph feeds into additive slots, which is not
+        /// knowable from the animation alone.
         /// </summary>
-        private void GetMovementForTime(float time, out AnimationMovement lastMovement, out AnimationMovement nextMovement, out float t)
-        {
-            time %= FrameCount / Fps;
-
-            var nextMovementIndex = GetMovementIndexForTime(time);
-            var lastMovementIndex = nextMovementIndex - 1;
-
-            nextMovement = Movements[nextMovementIndex];
-            if (nextMovementIndex == 0)
-            {
-                lastMovement = null;
-
-                var movementTime = nextMovement.EndFrame / Fps;
-                t = time / movementTime;
-                return;
-            }
-
-            lastMovement = Movements[lastMovementIndex];
-
-            var startTime = lastMovement.EndFrame / Fps;
-            var endTime = nextMovement.EndFrame / Fps;
-
-            var movementDuration = endTime - startTime;
-            var elapsedTime = time - startTime;
-
-            t = Math.Min(1f, elapsedTime / movementDuration);
-        }
+        public bool IsAdditive { get; set; }
 
         /// <summary>
-        /// Get the animation matrix for each bone.
+        /// Gets whether decoding this animation writes any flex controller data.
         /// </summary>
-        public void GetAnimationMatrices(Span<Matrix4x4> matrices, AnimationFrameCache frameCache, int frameIndex)
-        {
-            // Get bone transformations
-            var frame = frameCache.GetFrame(this, frameIndex);
-
-            GetAnimationMatrices(matrices, frame, frameCache.Skeleton);
-        }
+        public virtual bool HasFlexData => false;
 
         /// <summary>
-        /// Get the animation matrix for each bone.
+        /// Gets the resource name of the skeleton this animation is authored on. A model's own
+        /// skeleton is named after the vmdl it came from, so animations on it carry that name.
         /// </summary>
-        public void GetAnimationMatrices(Span<Matrix4x4> matrices, AnimationFrameCache frameCache, float time)
-        {
-            // Get bone transformations
-            var frame = FrameCount != 0
-                ? frameCache.GetInterpolatedFrame(this, time)
-                : null;
+        public string TargetSkeletonName { get; protected init; } = string.Empty;
 
-            GetAnimationMatrices(matrices, frame, frameCache.Skeleton);
-        }
+        /// <summary>
+        /// The delta a decoded bone of an additive frame contributes, in the one convention everything
+        /// composing deltas expects: add the position and the scale, post-multiply the rotation. The two
+        /// formats do not decode to that convention on their own, which is what this reconciles.
+        /// </summary>
+        public abstract FrameBone GetAdditiveDelta(int boneIndex, FrameBone bone);
 
-        public static void GetAnimationMatrices(Span<Matrix4x4> matrices, Frame frame, Skeleton skeleton)
+        /// <summary>
+        /// Composes an already-decoded additive frame over the skeleton bind pose, in place.
+        /// </summary>
+        public void ComposeAdditiveOverBindPose(FrameBone[] bones, Skeleton skeleton)
         {
-            foreach (var root in skeleton.Roots)
+            for (var i = 0; i < bones.Length; i++)
             {
-                GetAnimationMatrixRecursive(root, Matrix4x4.Identity, Matrix4x4.Identity, frame, matrices);
-            }
-        }
+                var bindPose = skeleton.Bones[i];
+                var delta = GetAdditiveDelta(i, bones[i]);
 
-        public void DecodeFrame(Frame outFrame)
-        {
-            // Read all frame blocks
-            foreach (var frameBlock in FrameBlocks)
-            {
-                // Only consider blocks that actual contain info for this frame
-                if (outFrame.FrameIndex >= frameBlock.StartFrame && outFrame.FrameIndex <= frameBlock.EndFrame)
-                {
-                    foreach (var segmentIndex in frameBlock.SegmentIndexArray)
-                    {
-                        var segment = SegmentArray[segmentIndex];
-                        // Segment could be null for unknown decoders
-                        segment?.Read(outFrame.FrameIndex - frameBlock.StartFrame, outFrame);
-                    }
-                }
+                bones[i] = new FrameBone(bindPose.Position + delta.Position, 1f + delta.Scale, bindPose.Angle * delta.Angle);
             }
         }
 
         /// <summary>
-        /// Get animation matrix recursively.
+        /// Decodes animation data for the specified frame.
         /// </summary>
-        private static void GetAnimationMatrixRecursive(Bone bone, Matrix4x4 bindPose, Matrix4x4 invBindPose, Frame frame, Span<Matrix4x4> matrices)
+        public abstract void DecodeFrame(Frame outFrame);
+
+        /// <summary>
+        /// Determines whether this animation has movement data.
+        /// </summary>
+        public abstract bool HasMovementData();
+
+        /// <summary>
+        /// Returns interpolated root motion data at the specified time.
+        /// </summary>
+        public abstract AnimationMovement.MovementData GetMovementOffsetData(float time);
+
+        /// <summary>
+        /// Returns interpolated root motion data at the specified frame.
+        /// </summary>
+        public abstract AnimationMovement.MovementData GetMovementOffsetData(int frame);
+
+        /// <summary>
+        /// The root motion advanced through between two playback times, as a rigid transform (yaw about Z
+        /// plus translation) to compose onto whatever the animation drives.
+        /// </summary>
+        /// <remarks>
+        /// Looping is unrolled rather than replayed: a step crossing the loop point runs out its cycle and
+        /// carries on from the start of the next. Samples are the root's transform per frame rather than a
+        /// delta from its start, and composing them this way cancels out the clip's own starting offset.
+        /// Stepping backwards gives the forward step undone.
+        /// </remarks>
+        public Matrix4x4 GetRootMotionDelta(float fromTime, float toTime)
         {
-            // Calculate world space inverse bind pose
-            invBindPose *= bone.InverseBindPose;
-
-            // Calculate and apply tranformation matrix
-            if (frame != null)
+            if (!HasMovementData() || CycleDuration <= 0f || fromTime == toTime)
             {
-                var transform = frame.Bones[bone.Index];
-                bindPose = Matrix4x4.CreateScale(transform.Scale)
-                    * Matrix4x4.CreateFromQuaternion(transform.Angle)
-                    * Matrix4x4.CreateTranslation(transform.Position)
-                    * bindPose;
-            }
-            else
-            {
-                bindPose = bone.BindPose * bindPose;
+                return Matrix4x4.Identity;
             }
 
-            // Store result
-            var skinMatrix = invBindPose * bindPose;
-            matrices[bone.Index] = skinMatrix;
-
-            // Propagate to childen
-            foreach (var child in bone.Children)
+            if (toTime < fromTime)
             {
-                GetAnimationMatrixRecursive(child, bindPose, invBindPose, frame, matrices);
+                return Matrix4x4.Invert(GetRootMotionDelta(toTime, fromTime), out var backwards)
+                    ? backwards
+                    : Matrix4x4.Identity;
             }
+
+            var (fromCycle, fromFrame, fromRemainder) = GetCyclePosition(fromTime);
+            var (toCycle, toFrame, toRemainder) = GetCyclePosition(toTime);
+
+            if (!Matrix4x4.Invert(GetRootMotionAt(fromFrame, fromRemainder), out var delta))
+            {
+                return Matrix4x4.Identity;
+            }
+
+            if (fromCycle == toCycle)
+            {
+                return delta * GetRootMotionAt(toFrame, toRemainder);
+            }
+
+            if (!Matrix4x4.Invert(GetRootMotionAt(0, 0f), out var inverseCycleStart))
+            {
+                return Matrix4x4.Identity;
+            }
+
+            // Run out the starting cycle, add any skipped whole, then pick up from the start of the last one.
+            var cycleEnd = GetRootMotionAt(CycleFrames, 0f);
+            delta *= cycleEnd;
+
+            for (var skipped = toCycle - fromCycle; skipped > 1; skipped--)
+            {
+                delta *= inverseCycleStart * cycleEnd;
+            }
+
+            return delta * inverseCycleStart * GetRootMotionAt(toFrame, toRemainder);
         }
 
+        /// <summary>
+        /// The root's transform at a frame within one cycle, interpolated towards the frame after it the same
+        /// way the frame cache interpolates the pose so the two stay in step.
+        /// </summary>
+        private Matrix4x4 GetRootMotionAt(int frame, float remainder)
+        {
+            var movement = AnimationMovement.Lerp(
+                GetMovementOffsetData(frame),
+                GetMovementOffsetData(Math.Min(frame + 1, CycleFrames)),
+                remainder
+            );
+
+            return Matrix4x4.CreateRotationZ(float.DegreesToRadians(movement.Angle))
+                * Matrix4x4.CreateTranslation(movement.Position);
+        }
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Returns the animation name.
+        /// </remarks>
         public override string ToString()
         {
             return Name;

@@ -3,14 +3,14 @@ using SkiaSharp;
 
 namespace ValveResourceFormat.TextureDecoders
 {
-    internal class DecodeR32F : ITextureDecoder
+    internal readonly struct DecodeR32F : ITextureDecoder
     {
         public void Decode(SKBitmap bitmap, Span<byte> input)
         {
             using var pixels = bitmap.PeekPixels();
             var inputPixels = MemoryMarshal.Cast<byte, float>(input);
 
-            if (bitmap.ColorType == SKColorType.RgbaF32)
+            if (bitmap.ColorType == ResourceTypes.Texture.HdrBitmapColorType)
             {
                 DecodeHdr(pixels, inputPixels);
                 return;
@@ -19,7 +19,7 @@ namespace ValveResourceFormat.TextureDecoders
             DecodeLdr(pixels, inputPixels);
         }
 
-        private static void DecodeHdr(SKPixmap pixels, Span<float> inputPixels)
+        private static void DecodeHdr(SKPixmap pixels, ReadOnlySpan<float> inputPixels)
         {
             var hdrColors = pixels.GetPixelSpan<SKColorF>();
 
@@ -29,7 +29,7 @@ namespace ValveResourceFormat.TextureDecoders
             }
         }
 
-        private static void DecodeLdr(SKPixmap pixels, Span<float> inputPixels)
+        private static void DecodeLdr(SKPixmap pixels, ReadOnlySpan<float> inputPixels)
         {
             var ldrColors = pixels.GetPixelSpan<SKColor>();
 

@@ -3,34 +3,36 @@ using System.IO;
 using System.IO.Enumeration;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
+using GUI.Forms;
 using GUI.Types.Viewers;
 using GUI.Utils;
-using SteamDatabase.ValvePak;
+using ValvePak;
 using ValveResourceFormat;
-using ValveResourceFormat.Blocks;
 using ValveResourceFormat.Blocks.ResourceEditInfoStructs;
 using ValveResourceFormat.IO;
 
 namespace GUI.Types.PackageViewer
 {
 #pragma warning disable CA1001 // TreeView is not owned by this class, set to null in VPK_Disposed
-    class PackageViewer : IViewer
+    class PackageViewer(VrfGuiContext vrfGuiContext) : IViewer, IDisposable
 #pragma warning restore CA1001
     {
-        private VrfGuiContext VrfGuiContext;
-        private TreeViewWithSearchResults TreeView;
-        private BetterTreeNode LastContextTreeNode;
+#pragma warning disable CA2213 // TODO: Can we fix TreeView to be owned by this class?
+        private TreeViewWithSearchResults? TreeView;
+#pragma warning restore CA2213
+        private VirtualPackageNode? VirtualRoot;
+        private BetterTreeNode? LastContextTreeNode;
         private bool IsEditingPackage; // TODO: Allow editing existing vpks (but not chunked ones)
 
         public static bool IsAccepted(uint magic)
         {
-            return magic == SteamDatabase.ValvePak.Package.MAGIC;
+            return magic == ValvePak.Package.MAGIC;
         }
 
-        public Control CreateEmpty(VrfGuiContext vrfGuiContext)
+        public Control CreateEmpty()
         {
-            VrfGuiContext = vrfGuiContext;
             IsEditingPackage = true;
 
             var package = new Package();
@@ -38,16 +40,19 @@ namespace GUI.Types.PackageViewer
 
             vrfGuiContext.CurrentPackage = package;
 
+            VirtualRoot = new VirtualPackageNode("root", 0, null);
             CreateTreeViewWithSearchResults();
+
+            if (TreeView == null)
+            {
+                throw new InvalidOperationException("TreeView was not created");
+            }
 
             return TreeView;
         }
 
-        public TabPage Create(VrfGuiContext vrfGuiContext, Stream stream)
+        public async Task LoadAsync(Stream? stream)
         {
-            VrfGuiContext = vrfGuiContext;
-
-            var tab = new TabPage();
             var package = new Package();
             package.OptimizeEntriesForBinarySearch(StringComparison.OrdinalIgnoreCase);
 
@@ -63,20 +68,52 @@ namespace GUI.Types.PackageViewer
 
             vrfGuiContext.CurrentPackage = package;
 
+            VirtualRoot = new VirtualPackageNode("root", 0, null);
+
+            if (vrfGuiContext.CurrentPackage.Entries != null)
+            {
+                foreach (var fileType in vrfGuiContext.CurrentPackage.Entries)
+                {
+                    foreach (var file in fileType.Value)
+                    {
+                        BetterTreeView.AddFileNode(VirtualRoot, file);
+                    }
+                }
+            }
+
+            foreach (var node in VirtualRoot.Folders)
+            {
+                VirtualRoot.TotalSize += node.Value.TotalSize;
+            }
+
+            foreach (var node in VirtualRoot.Files)
+            {
+                VirtualRoot.TotalSize += node.TotalLength;
+            }
+        }
+
+        public void Create(TabPage tab)
+        {
             CreateTreeViewWithSearchResults();
             tab.Controls.Add(TreeView);
-
-            return tab;
         }
 
         private void CreateTreeViewWithSearchResults()
         {
+            if (VirtualRoot == null)
+            {
+                throw new InvalidOperationException("VirtualRoot must be initialized before creating TreeView");
+            }
+
             // create a TreeView with search capabilities, register its events, and add it to the tab
             TreeView = new TreeViewWithSearchResults(this);
-            TreeView.InitializeTreeViewFromPackage(VrfGuiContext);
+            TreeView.InitializeTreeViewFromPackage(vrfGuiContext, VirtualRoot);
             TreeView.OpenPackageEntry += VPK_OpenFile;
             TreeView.OpenContextMenu += VPK_OnContextMenu;
             TreeView.PreviewFile += VPK_PreviewFile;
+            TreeView.PreviewCleared += VPK_PreviewCleared;
+            TreeView.PreviewFocused += VPK_PreviewFocused;
+            TreeView.PreviewBlurred += VPK_PreviewBlurred;
             TreeView.Disposed += VPK_Disposed;
         }
 
@@ -89,16 +126,16 @@ namespace GUI.Types.PackageViewer
                 directory = Path.Join(prefix, directory);
             }
 
-            directory = directory.Replace('\\', SteamDatabase.ValvePak.Package.DirectorySeparatorChar);
+            directory = directory.Replace('\\', ValvePak.Package.DirectorySeparatorChar);
 
-            TreeView.AddFolderNode(directory);
+            TreeView?.AddFolderNode(directory);
         }
 
         public void AddFilesFromFolder(string inputDirectory)
         {
             var files = new FileSystemEnumerable<string>(
                 inputDirectory,
-                (ref FileSystemEntry entry) => entry.ToSpecifiedFullPath(),
+                (ref entry) => entry.ToSpecifiedFullPath(),
                 new EnumerationOptions
                 {
                     RecurseSubdirectories = true,
@@ -108,8 +145,13 @@ namespace GUI.Types.PackageViewer
             AddFiles(files, inputDirectory);
         }
 
-        public void AddFiles(IEnumerable<string> files, string inputDirectory = null)
+        public void AddFiles(IEnumerable<string> files, string? inputDirectory = null)
         {
+            if (TreeView == null)
+            {
+                return;
+            }
+
             var prefix = GetCurrentPrefix();
 
             Cursor.Current = Cursors.WaitCursor;
@@ -134,7 +176,12 @@ namespace GUI.Types.PackageViewer
                     name = Path.Join(prefix, name);
                 }
 
-                var entry = VrfGuiContext.CurrentPackage.AddFile(name, data);
+                if (vrfGuiContext.CurrentPackage == null)
+                {
+                    continue;
+                }
+
+                var entry = vrfGuiContext.CurrentPackage.AddFile(name, data);
                 TreeView.AddFileNode(entry);
 
                 if (data.Length >= 6)
@@ -150,20 +197,35 @@ namespace GUI.Types.PackageViewer
 
             TreeView.EndUpdate();
 
+            // Reveal the added entries under the folder the context menu was opened on
+            LastContextTreeNode?.Expand();
+
             Cursor.Current = Cursors.Default;
 
-            if (resourceEntries.Count > 0 && MessageBox.Show(
-                "Would you like to scan and all dependencies of the compiled file (ending in \"_c\") you just added?",
-                "Detected a compiled resource",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Question) == DialogResult.Yes)
-            {
-                MessageBox.Show("TODO :)");
-
 #if DEBUG
+            ScanForResourceDependencies();
+
+            // Fire-and-forget on purpose: this is a dev-only prompt, and AddFiles has no reason to wait for it.
+            async void ScanForResourceDependencies()
+            {
+                if (resourceEntries.Count == 0 || !await AppMessageDialogs.ConfirmAsync(
+                    "Would you like to scan for all dependencies of the compiled file (ending in \"_c\") you just added?",
+                    "Detected a compiled resource",
+                    buttons: ConfirmButtons.YesNo).ConfigureAwait(true))
+                {
+                    return;
+                }
+
+                await AppMessageDialogs.ShowMessageAsync("This is not yet implemented.", "Not implemented").ConfigureAwait(true);
+
                 while (resourceEntries.TryDequeue(out var entry))
                 {
-                    VrfGuiContext.CurrentPackage.ReadEntry(entry.Entry, out var output, false);
+                    if (vrfGuiContext.CurrentPackage == null)
+                    {
+                        break;
+                    }
+
+                    vrfGuiContext.CurrentPackage.ReadEntry(entry.Entry, out var output, false);
                     using var entryStream = new MemoryStream(output);
 
                     using var resource = new ValveResourceFormat.Resource();
@@ -200,24 +262,34 @@ namespace GUI.Types.PackageViewer
 
                         if (!File.Exists(file))
                         {
-                            Log.Warn(nameof(PackageViewer), $"Faield to find file: {file}");
+                            Log.Warn(nameof(PackageViewer), $"Failed to find file: {file}");
                             continue;
                         }
                     }
-
-
                 }
+            }
 #endif
+        }
+
+        public void RemoveCurrentFiles()
+        {
+            if (LastContextTreeNode != null)
+            {
+                var removedRoot = LastContextTreeNode.PkgNode;
+                RemoveRecursiveFiles(LastContextTreeNode);
+
+                if (removedRoot != null)
+                {
+                    TreeView?.PruneNavigationHistory(removedRoot);
+                }
             }
         }
 
-        public void RemoveCurrentFiles() => RemoveRecursiveFiles(LastContextTreeNode);
-
         public void RemoveRecursiveFiles(BetterTreeNode node)
         {
-            if (node.PkgNode != null)
+            if (node.PkgNode != null && node.Parent is BetterTreeNode parentNode)
             {
-                ((BetterTreeNode)node.Parent).PkgNode.Folders.Remove(node.PkgNode.Name);
+                parentNode.PkgNode?.Folders.Remove(node.PkgNode.Name);
             }
 
             for (var i = node.Nodes.Count - 1; i >= 0; i--)
@@ -225,10 +297,10 @@ namespace GUI.Types.PackageViewer
                 RemoveRecursiveFiles((BetterTreeNode)node.Nodes[i]);
             }
 
-            if (node.PackageEntry != null)
+            if (node.PackageEntry != null && node.Parent is BetterTreeNode parentNode2)
             {
-                ((BetterTreeNode)node.Parent).PkgNode.Files.Remove(node.PackageEntry);
-                VrfGuiContext.CurrentPackage.RemoveFile(node.PackageEntry);
+                parentNode2.PkgNode?.Files.Remove(node.PackageEntry);
+                vrfGuiContext.CurrentPackage?.RemoveFile(node.PackageEntry);
             }
 
             if (node.Level > 0)
@@ -239,17 +311,25 @@ namespace GUI.Types.PackageViewer
 
         public void SaveToFile(string fileName)
         {
-            VrfGuiContext.CurrentPackage.Write(fileName);
+            if (vrfGuiContext.CurrentPackage == null)
+            {
+                return;
+            }
+
+            vrfGuiContext.CurrentPackage.Write(fileName);
 
             var fileCount = 0;
             var fileSize = 0u;
 
-            foreach (var fileType in VrfGuiContext.CurrentPackage.Entries)
+            if (vrfGuiContext.CurrentPackage.Entries != null)
             {
-                foreach (var file in fileType.Value)
+                foreach (var fileType in vrfGuiContext.CurrentPackage.Entries)
                 {
-                    fileCount++;
-                    fileSize += file.TotalLength;
+                    foreach (var file in fileType.Value)
+                    {
+                        fileCount++;
+                        fileSize += file.TotalLength;
+                    }
                 }
             }
 
@@ -257,22 +337,26 @@ namespace GUI.Types.PackageViewer
 
             Log.Info(nameof(PackageViewer), result);
 
-            MessageBox.Show(
-                result,
-                "VPK created",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information
-            );
+            _ = AppMessageDialogs.ShowMessageAsync(result, "VPK created");
         }
 
-        internal static List<PackageEntry> RecoverDeletedFiles(Package package, Action<string> setProgress)
+        internal static List<PackageEntry> RecoverDeletedFiles(Package package, GenericProgressForm progress)
         {
+            if (package.Entries == null)
+            {
+                return [];
+            }
+
             var allEntries = package.Entries
                 .SelectMany(file => file.Value)
                 .OrderBy(file => file.Offset)
                 .GroupBy(file => file.ArchiveIndex)
                 .OrderBy(x => x.Key)
                 .ToDictionary(x => x.Key, x => x.ToList());
+
+            // Every known entry has a gap in front of it to scan, so that is the unit of progress
+            progress.SetBarMax(allEntries.Sum(x => x.Value.Count));
+            var processed = 0;
 
             var hiddenIndex = 0;
             var totalSlackSize = 0u;
@@ -337,7 +421,7 @@ namespace GUI.Types.PackageViewer
                         try
                         {
                             package.ReadEntry(newEntry, bytes, validateCrc: false);
-                            using var stream = new MemoryStream(bytes);
+                            using var stream = new MemoryStream(bytes, 0, (int)newEntry.TotalLength);
                             using var resource = new ValveResourceFormat.Resource();
                             resource.Read(stream, verifyFileSize: false);
 
@@ -355,7 +439,7 @@ namespace GUI.Types.PackageViewer
                                 scan = true;
                             }
 
-                            string resourceTypeExtensionWithDot = null;
+                            string? resourceTypeExtensionWithDot = null;
 
                             if (resource.ResourceType != ResourceType.Unknown)
                             {
@@ -364,7 +448,7 @@ namespace GUI.Types.PackageViewer
                                 newEntry.TypeName = string.Concat(resourceTypeExtension, GameFileLoader.CompiledFileSuffix);
                             }
 
-                            string filepath = null;
+                            string? filepath = null;
 
                             // Use input dependency as the file name if there is one
                             if (resource.EditInfo != null)
@@ -381,12 +465,16 @@ namespace GUI.Types.PackageViewer
 
                             if (filepath != null)
                             {
-                                newEntry.DirectoryName = Path.GetDirectoryName(filepath).Replace('\\', SteamDatabase.ValvePak.Package.DirectorySeparatorChar);
+                                var dirName = Path.GetDirectoryName(filepath);
+                                if (dirName != null)
+                                {
+                                    newEntry.DirectoryName = dirName.Replace('\\', ValvePak.Package.DirectorySeparatorChar);
+                                }
                                 newEntry.FileName = Path.GetFileNameWithoutExtension(filepath);
                             }
                             else
                             {
-                                newEntry.DirectoryName += string.Concat(SteamDatabase.ValvePak.Package.DirectorySeparatorChar, resource.ResourceType);
+                                newEntry.DirectoryName += string.Concat(ValvePak.Package.DirectorySeparatorChar, resource.ResourceType);
                             }
                         }
                         catch (Exception ex)
@@ -395,7 +483,7 @@ namespace GUI.Types.PackageViewer
 
                             newEntry.FileName += $" ({length} bytes)";
 
-                            var span = bytes.AsSpan();
+                            var span = bytes.AsSpan(0, (int)newEntry.TotalLength);
 
                             if (span.StartsWith(kv3header))
                             {
@@ -420,16 +508,15 @@ namespace GUI.Types.PackageViewer
                         typeEntries.Add(newEntry);
                         hiddenFiles.Add(newEntry);
 
-                        if (hiddenFiles.Count % 100 == 0)
-                        {
-                            setProgress($"Scanning for deleted files, this may take a while… Found {hiddenFiles.Count} files ({HumanReadableByteSizeFormatter.Format(totalSlackSize)}) so far…");
-                        }
+                        progress.SetProgress($"Found {hiddenFiles.Count} files ({HumanReadableByteSizeFormatter.Format(totalSlackSize)}) so far…");
                     }
                 }
 
                 // Recover files in gaps between entries
                 foreach (var entry in entries)
                 {
+                    progress.SetBarValue(++processed);
+
                     if (entry.Length == 0)
                     {
                         continue;
@@ -464,7 +551,7 @@ namespace GUI.Types.PackageViewer
             return hiddenFiles;
         }
 
-        private static string RecoverDeletedFilesGetPossiblePath(List<InputDependency> inputDeps, string resourceTypeExtensionWithDot)
+        private static string? RecoverDeletedFilesGetPossiblePath(List<InputDependency> inputDeps, string? resourceTypeExtensionWithDot)
         {
             if (inputDeps.Count == 0)
             {
@@ -503,13 +590,16 @@ namespace GUI.Types.PackageViewer
             return inputDeps[0].ContentRelativeFilename;
         }
 
-        private void VPK_Disposed(object sender, EventArgs e)
+        private void VPK_Disposed(object? sender, EventArgs e)
         {
             if (sender is TreeViewWithSearchResults treeViewWithSearch)
             {
                 treeViewWithSearch.OpenPackageEntry -= VPK_OpenFile;
                 treeViewWithSearch.OpenContextMenu -= VPK_OnContextMenu;
                 treeViewWithSearch.PreviewFile -= VPK_PreviewFile;
+                treeViewWithSearch.PreviewCleared -= VPK_PreviewCleared;
+                treeViewWithSearch.PreviewFocused -= VPK_PreviewFocused;
+                treeViewWithSearch.PreviewBlurred -= VPK_PreviewBlurred;
                 treeViewWithSearch.Disposed -= VPK_Disposed;
                 TreeView = null;
                 LastContextTreeNode = null;
@@ -517,39 +607,52 @@ namespace GUI.Types.PackageViewer
         }
 
         /// <summary>
-        /// Opens a file based on a double clicked list view item. Does nothing if the double clicked item contains a non-TreeNode object.
+        /// Opens the given package entry in a new tab.
         /// </summary>
         /// <param name="sender">Object which raised event.</param>
-        /// <param name="e">Event data.</param>
-        private void VPK_OpenFile(object sender, PackageEntry entry)
+        /// <param name="entry">The package entry to open.</param>
+        private void VPK_OpenFile(object? sender, PackageEntry entry)
         {
-            var vrfGuiContext = new VrfGuiContext(entry.GetFullPath(), VrfGuiContext);
-            Program.MainForm.OpenFile(vrfGuiContext, entry);
+            var newVrfGuiContext = new VrfGuiContext(entry.GetFullPath(), vrfGuiContext);
+            Program.MainForm.OpenFile(newVrfGuiContext, entry);
         }
 
-        private void VPK_PreviewFile(object sender, PackageEntry entry)
+        private void VPK_PreviewCleared(object? sender, EventArgs e)
         {
-            if (((Settings.QuickPreviewFlags)Settings.Config.QuickFilePreview & Settings.QuickPreviewFlags.Enabled) == 0)
+            // A folder is shown instead of a file preview, so the window title should no longer reflect a file.
+            Program.MainForm.ResetPreviewTitle();
+        }
+
+        private void VPK_PreviewFocused(object? sender, TabPage previewTab)
+        {
+            Program.MainForm.ShowPreviewKeybindings(previewTab);
+        }
+
+        private void VPK_PreviewBlurred(object? sender, EventArgs e)
+        {
+            Program.MainForm.ShowSelectedTabKeybindings();
+        }
+
+        private void VPK_PreviewFile(object? sender, PackageEntry entry)
+        {
+            if (TreeView == null)
             {
                 return;
             }
 
-            var extension = entry.TypeName;
-
-            if (extension is "vpk" or "vmap_c")
+            if (!TreeViewWithSearchResults.CanQuickPreviewFile(entry))
             {
-                // Not ideal to check by file extension, but do not nest vpk previewss
                 return;
             }
 
-            var vrfGuiContext = new VrfGuiContext(entry.GetFullPath(), VrfGuiContext);
-            Program.MainForm.OpenFile(vrfGuiContext, entry, TreeView);
+            var newVrfGuiContext = new VrfGuiContext(entry.GetFullPath(), vrfGuiContext);
+            Program.MainForm.OpenFile(newVrfGuiContext, entry, TreeView);
         }
 
         private string GetCurrentPrefix()
         {
             var prefix = string.Empty;
-            TreeNode parent = LastContextTreeNode;
+            TreeNode? parent = LastContextTreeNode;
 
             while (parent != null && parent.Level > 0)
             {
@@ -561,12 +664,17 @@ namespace GUI.Types.PackageViewer
         }
 
         /// <summary>
-        /// Opens a context menu where the user right-clicked in the ListView.
+        /// Opens a context menu where the user right-clicked in the TreeView or ListView.
         /// </summary>
         /// <param name="sender">Object which raised event.</param>
         /// <param name="e">Event data.</param>
-        private void VPK_OnContextMenu(object sender, PackageContextMenuEventArgs e)
+        private void VPK_OnContextMenu(object? sender, PackageContextMenuEventArgs e)
         {
+            if (TreeView == null)
+            {
+                return;
+            }
+
             var isRoot = e.PkgNode == TreeView.mainTreeView.Root;
             var isFolder = e.PackageEntry is null;
 
@@ -581,13 +689,24 @@ namespace GUI.Types.PackageViewer
                 {
                     LastContextTreeNode = e.TreeNode;
 
-                    Program.MainForm.ShowVpkEditingContextMenu((Control)sender, e.Location, isRoot, isFolder);
+                    if (sender is Control control)
+                    {
+                        Program.MainForm.ShowVpkEditingContextMenu(control, e.Location, isRoot, isFolder);
+                    }
                 }
 
                 return;
             }
 
-            Program.MainForm.ShowVpkContextMenu((Control)sender, e.Location, isRoot, isFolder);
+            if (sender is Control senderControl)
+            {
+                Program.MainForm.ShowVpkContextMenu(senderControl, e.Location, isRoot, isFolder, TreeView.DeletedFilesRecovered);
+            }
+        }
+
+        public void Dispose()
+        {
+            TreeView = null;
         }
     }
 }

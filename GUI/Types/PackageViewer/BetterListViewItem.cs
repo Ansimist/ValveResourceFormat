@@ -1,5 +1,5 @@
 using System.Windows.Forms;
-using SteamDatabase.ValvePak;
+using ValvePak;
 
 namespace GUI.Types.PackageViewer
 {
@@ -8,19 +8,24 @@ namespace GUI.Types.PackageViewer
 #pragma warning restore CA2237
     {
         /// <summary>
-        /// True if this node represents a directory in the tree view
+        /// Magic number to identify parent navigation item via Tag property.
+        /// </summary>
+        public const int ParentNavigationTag = 0x50415245;
+
+        /// <summary>
+        /// True if this item represents a directory (folder) rather than a file.
         /// </summary>
         public bool IsFolder => PackageEntry == null;
 
         /// <summary>
         /// If this is a file, the <see cref="PackageEntry"/> representing the file. Otherwise null.
         /// </summary>
-        public PackageEntry PackageEntry { get; init; }
+        public PackageEntry? PackageEntry { get; init; }
 
         /// <summary>
         /// If this is a folder, the virtual node representing this folder. Otherwise null.
         /// </summary>
-        public VirtualPackageNode PkgNode { get; init; }
+        public VirtualPackageNode? PkgNode { get; init; }
 
         public BetterListViewItem(string text) : base(text)
         {

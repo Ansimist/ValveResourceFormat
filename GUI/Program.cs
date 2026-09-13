@@ -1,13 +1,35 @@
+using System.Diagnostics;
 using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using GUI.Utils;
+using ValveResourceFormat.Renderer;
 
 namespace GUI
 {
     static class Program
     {
+#nullable disable
         public static MainForm MainForm { get; private set; }
+        public static Assembly Assembly { get; private set; }
+        public static string ProductVersion { get; private set; }
+        public static string DisplayVersion { get; private set; }
+#nullable enable
+
+        /// <summary>Whether this build was produced by the CI for a tagged stable release.</summary>
+        public const bool IsReleaseBuild =
+#if CI_RELEASE_BUILD // For CI builds, it is set in Directory.Build.props
+            true;
+#else
+            false;
+#endif
+
+        /// <summary>The update channel that produced this build.</summary>
+        public static Settings.UpdateChannel BuildChannel => IsReleaseBuild ? Settings.UpdateChannel.Stable : Settings.UpdateChannel.Dev;
 
         /// <summary>
         /// The main entry point for the application.
@@ -18,6 +40,13 @@ namespace GUI
             AppDomain.CurrentDomain.UnhandledException += UnhandledException;
             Application.ThreadException += ThreadException;
 
+#if DEBUG
+            // Touching Trace.Listeners reroutes Debug.Assert through the listeners,
+            // which prevents the default behavior of Environment.FailFast when no debugger is attached
+            Trace.Listeners.Clear();
+            Trace.Listeners.Add(new AssertTraceListener());
+#endif
+
             // Set invariant culture so we have consistent localization (e.g. dots do not get encoded as commas)
             CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
             CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
@@ -26,8 +55,56 @@ namespace GUI
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
+            if (args.Length > 0 && Ipc.TryForwardToExistingInstance(args))
+            {
+                return;
+            }
+
+            Assembly = Assembly.GetExecutingAssembly();
+
+            // from winforms dep: Application.ProductVersion
+            // Custom attribute
+            Assembly? entryAssembly = Assembly.GetEntryAssembly();
+            if (entryAssembly is not null)
+            {
+                var attrs = entryAssembly.GetCustomAttributes(typeof(AssemblyInformationalVersionAttribute), false);
+                if (attrs is not null && attrs.Length > 0)
+                {
+                    ProductVersion = ((AssemblyInformationalVersionAttribute)attrs[0]).InformationalVersion;
+                }
+            }
+
+            if (ProductVersion is null || ProductVersion.Length == 0)
+            {
+                throw new InvalidDataException("Failed to find version number");
+            }
+
+            DisplayVersion = FormatDisplayVersion(ProductVersion);
+
+            UpdateInstaller.CleanupPreviousInstall();
+
             MainForm = new MainForm(args);
+
             Application.Run(MainForm);
+        }
+
+        private static string FormatDisplayVersion(string version)
+        {
+            var versionPlus = version.IndexOf('+', StringComparison.Ordinal);
+
+            if (versionPlus < 0)
+            {
+                return version;
+            }
+
+            var commit = version.AsSpan(versionPlus + 1);
+
+            if (commit.Length > 9)
+            {
+                commit = commit[..9];
+            }
+
+            return string.Concat(version.AsSpan(0, versionPlus), " ", commit);
         }
 
         private static void ThreadException(object sender, ThreadExceptionEventArgs e)
@@ -40,16 +117,132 @@ namespace GUI
             ShowError((Exception)ex.ExceptionObject);
         }
 
-        private static void ShowError(Exception exception)
+        public static void ShowError(Exception exception)
         {
             Log.Error(nameof(Program), exception.ToString());
 
-            MessageBox.Show(
-                $"{exception.Message}{Environment.NewLine}{Environment.NewLine}See console for more information.{Environment.NewLine}{Environment.NewLine}Try using latest dev build to see if the issue persists.{Environment.NewLine}Source 2 Viewer Version: {Application.ProductVersion[..16]}",
-                $"Unhandled exception: {exception.GetType()}",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error
-            );
+            if (exception is ValveResourceFormat.Renderer.Shaders.ShaderLoader.ShaderCompilerException)
+            {
+#pragma warning disable RS0030
+                // cant use the new api here because this must work when UI is broken or not yet initialized due to the callbacks
+                // finding a real fix here is a problem for future us when we know how the new UI works.
+                MessageBox.Show(exception.Message, "Failed to compile shader", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+#pragma warning restore RS0030
+                return;
+            }
+
+            var output = new StringBuilder(512);
+            AppendExceptionWithVersion(output, exception);
+            var outputText = output.ToString();
+
+            var copyButton = new TaskDialogButton("Copy to clipboard");
+
+            var firstLocation = string.Empty;
+
+            try
+            {
+                var stackTrace = new StackTrace(exception, true);
+                if (stackTrace.FrameCount > 0)
+                {
+                    var frame = stackTrace.GetFrame(0);
+                    if (frame != null)
+                    {
+                        var method = frame.GetMethod();
+                        var fileName = frame.GetFileName();
+                        var lineNumber = frame.GetFileLineNumber();
+
+                        if (method != null)
+                        {
+                            firstLocation = $"{Environment.NewLine}{method.DeclaringType?.FullName}.{method.Name}";
+
+                            if (!string.IsNullOrEmpty(fileName) && lineNumber > 0)
+                            {
+                                firstLocation += $" in {fileName}:{lineNumber}";
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                //
+            }
+
+            ShowUpdateAfterError();
+
+            var page = new TaskDialogPage
+            {
+                Caption = $"Unhandled exception: {exception.GetType()}",
+                Text = $"{exception.Message}{firstLocation}{Environment.NewLine}{Environment.NewLine}Use copy button when sharing this error, and also mention your exact steps. Details also available in console.",
+                Icon = TaskDialogIcon.Error,
+                Buttons = { copyButton, TaskDialogButton.Close },
+                DefaultButton = TaskDialogButton.Close,
+                AllowCancel = false,
+                AllowMinimize = false,
+                Expander = new TaskDialogExpander
+                {
+                    Position = TaskDialogExpanderPosition.AfterFootnote,
+                    Text = outputText,
+                },
+                Footnote = new TaskDialogFootnote
+                {
+                    Text = $"S2V {Program.DisplayVersion}{Environment.NewLine}Try using latest dev build to see if the issue persists.",
+                    Icon = TaskDialogIcon.Information
+                }
+            };
+
+            var result = TaskDialog.ShowDialog(page);
+
+            if (result == copyButton)
+            {
+                if (MainForm != null && MainForm.InvokeRequired)
+                {
+                    MainForm.BeginInvoke(() => AppClipboard.SetText(outputText));
+                }
+                else
+                {
+                    AppClipboard.SetText(outputText);
+                }
+            }
+        }
+
+        private static void ShowUpdateAfterError()
+        {
+            var mainForm = MainForm;
+
+            if (mainForm is not { IsHandleCreated: true, IsDisposed: false })
+            {
+                return;
+            }
+
+            try
+            {
+                mainForm.BeginInvoke(mainForm.ShowUpdateAfterError);
+            }
+            catch (InvalidOperationException)
+            {
+                // The window is being destroyed
+            }
+        }
+
+        public static void AppendExceptionWithVersion(StringBuilder output, Exception exception)
+        {
+            var version = Program.ProductVersion;
+
+            output.AppendLine("```");
+            output.AppendLine(exception.ToString());
+            output.AppendLine("```");
+
+            output.Append("*S2V ");
+            output.Append(version.Replace('+', ' '));
+            output.Append(CultureInfo.InvariantCulture, $" on {RuntimeInformation.OSDescription} ({RuntimeInformation.OSArchitecture})");
+
+            if (GLEnvironment.GpuRendererAndDriver != null)
+            {
+                output.Append(CultureInfo.InvariantCulture, $" ({GLEnvironment.GpuRendererAndDriver})");
+            }
+
+            output.AppendLine("*");
         }
     }
 }

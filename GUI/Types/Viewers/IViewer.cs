@@ -1,45 +1,33 @@
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using GUI.Controls;
-using GUI.Utils;
 
 namespace GUI.Types.Viewers
 {
-    interface IViewer
+    interface IViewer : IDisposable
     {
-        public TabPage Create(VrfGuiContext vrfGuiContext, Stream stream);
+        public Task LoadAsync(Stream? stream);
 
-        public static TabPage AddContentTab<T>(TabControl resTabs, string name, T content, bool preSelect = false)
+        /// <summary>
+        /// UI agnostic description of the loaded content. Viewers that implement this instead
+        /// of overriding <see cref="Create"/> must not reference WinForms at all, which makes
+        /// them trivially portable to a different UI framework.
+        /// </summary>
+        public ViewerContent? GetContent() => null;
+
+        public void Create(TabPage containerTabPage)
         {
-            string extract = null;
-            if (content is Func<string> exceptionless)
-            {
-                try
-                {
-                    extract = exceptionless();
-                }
-                catch (Exception e)
-                {
-                    extract = e.ToString();
-                    preSelect = false;
-                }
-            }
-            else
-            {
-                extract = content.ToString();
-            }
+            var content = GetContent()
+                ?? throw new NotImplementedException($"{GetType().Name} must implement either GetContent or Create");
 
-            var control = new CodeTextBox(extract);
-            var tab = new TabPage(name);
-            tab.Controls.Add(control);
-            resTabs.TabPages.Add(tab);
-
-            if (preSelect)
-            {
-                resTabs.SelectTab(tab);
-            }
-
-            return tab;
+            ViewerContentPresenter.Present(containerTabPage, content);
         }
+
+        /// <summary>
+        /// Called after the viewer has been made visible (the loading panel was removed). Viewers that render
+        /// lazily (e.g. GL viewers) use this to force their first draw. No-op by default.
+        /// </summary>
+        public void NotifyVisible() { }
     }
 }

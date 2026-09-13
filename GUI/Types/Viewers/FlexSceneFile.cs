@@ -1,25 +1,21 @@
+using System.Diagnostics;
 using System.IO;
-using System.Windows.Forms;
-using GUI.Controls;
+using System.Threading.Tasks;
 using GUI.Utils;
 
 namespace GUI.Types.Viewers
 {
-    class FlexSceneFile : IViewer
+    class FlexSceneFile(VrfGuiContext vrfGuiContext) : IViewer, IDisposable
     {
+        private string? vfeText;
+
         public static bool IsAccepted(uint magic)
         {
             return magic == ValveResourceFormat.FlexSceneFile.FlexSceneFile.MAGIC;
         }
 
-        public TabPage Create(VrfGuiContext vrfGuiContext, Stream stream)
+        public async Task LoadAsync(Stream? stream)
         {
-            var tabOuterPage = new TabPage();
-            var tabControl = new TabControl
-            {
-                Dock = DockStyle.Fill,
-            };
-            tabOuterPage.Controls.Add(tabControl);
             var vfe = new ValveResourceFormat.FlexSceneFile.FlexSceneFile();
 
             if (stream != null)
@@ -31,12 +27,26 @@ namespace GUI.Types.Viewers
                 vfe.Read(vrfGuiContext.FileName);
             }
 
-            var tabPage = new TabPage("Text");
-            var textControl = new CodeTextBox(vfe.ToString());
-            tabPage.Controls.Add(textControl);
-            tabControl.Controls.Add(tabPage);
+            vfeText = vfe.ToString();
+        }
 
-            return tabOuterPage;
+        public ViewerContent GetContent()
+        {
+            Debug.Assert(vfeText is not null);
+
+            var content = new ViewerContent.Tabs(
+            [
+                new("Text", new ViewerContent.Text(vfeText)),
+            ]);
+
+            vfeText = null;
+
+            return content;
+        }
+
+        public void Dispose()
+        {
+            //
         }
     }
 }

@@ -1,27 +1,43 @@
-using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
-using GUI.Types.Viewers;
+using GUI.Controls;
 using GUI.Utils;
-using ValveResourceFormat.Serialization;
-using ValveResourceFormat.Serialization.KeyValues;
+using Windows.Win32;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace GUI.Forms
 {
-    partial class EntityInfoForm : Form
+    partial class EntityInfoForm : ThemedForm
     {
-        public EntityInfoForm(AdvancedGuiFileLoader guiFileLoader)
+        public EntityInfoControl EntityInfoControl;
+        public ThemedButton? ShowInGraphButton { get; private set; }
+        private static WINDOWPLACEMENT? SavedWindowPlacement;
+
+        public EntityInfoForm(VrfGuiContext vrfGuiContext)
         {
-            InitializeComponent();
+            Width = 800;
+            Height = 450;
+            Text = "EntityInfoForm";
+
+            EntityInfoControl = new(vrfGuiContext)
+            {
+                Dock = DockStyle.Fill
+            };
+            Controls.Add(EntityInfoControl);
 
             Icon = Program.MainForm.Icon;
+        }
 
-            Resource.AddDataGridExternalRefAction(guiFileLoader, dataGridProperties, ColumnValue.Name, (referenceFound) =>
+        public void AddShowInGraphButton(EventHandler onClick)
+        {
+            ShowInGraphButton = new ThemedButton
             {
-                if (referenceFound)
-                {
-                    Close();
-                }
-            });
+                Text = "Show in I/O graph",
+                Dock = DockStyle.Bottom,
+                Height = 32,
+            };
+            ShowInGraphButton.Click += onClick;
+            Controls.Add(ShowInGraphButton);
         }
 
         protected override bool ProcessDialogKey(Keys keyData)
@@ -35,59 +51,38 @@ namespace GUI.Forms
             return base.ProcessDialogKey(keyData);
         }
 
-        public void ShowOutputsTabIfAnyData()
+        protected override void OnShown(System.EventArgs e)
         {
-            if (dataGridOutputs.RowCount > 0)
+            base.OnShown(e);
+
+            if (SavedWindowPlacement is { } placement)
             {
-                if (tabPageOutputs.Parent == null)
-                {
-                    tabControl.TabPages.Add(tabPageOutputs);
-                }
-            }
-            else
-            {
-                if (tabPageOutputs.Parent != null)
-                {
-                    tabControl.TabPages.Remove(tabPageOutputs);
-                }
+                PInvoke.SetWindowPlacement((Windows.Win32.Foundation.HWND)Handle, placement);
             }
         }
 
-        public void Clear()
+        protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            dataGridProperties.Rows.Clear();
-            dataGridOutputs.Rows.Clear();
-        }
-
-        public void AddProperty(string name, string value)
-        {
-            dataGridProperties.Rows.Add([name, value]);
-        }
-
-        public void AddConnection(KVObject connectionData)
-        {
-            var outputName = connectionData.GetStringProperty("m_outputName");
-            var targetName = connectionData.GetStringProperty("m_targetName");
-            var inputName = connectionData.GetStringProperty("m_inputName");
-            var parameter = connectionData.GetStringProperty("m_overrideParam");
-            var delay = connectionData.GetFloatProperty("m_flDelay");
-            var timesToFire = connectionData.GetInt32Property("m_nTimesToFire");
-
-            var stimesToFire = timesToFire switch
+            var placement = new WINDOWPLACEMENT
             {
-                1 => "Only Once",
-                >= 2 => $"Only {timesToFire} Times",
-                _ => "Infinite",
+                length = (uint)Marshal.SizeOf<WINDOWPLACEMENT>(),
             };
 
-            dataGridOutputs.Rows.Add([
-                outputName,
-                targetName,
-                inputName,
-                parameter,
-                delay.ToString(NumberFormatInfo.InvariantInfo),
-                stimesToFire
-            ]);
+            if (PInvoke.GetWindowPlacement((Windows.Win32.Foundation.HWND)Handle, ref placement))
+            {
+                SavedWindowPlacement = placement;
+            }
+
+            base.OnFormClosing(e);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && (EntityInfoControl != null))
+            {
+                EntityInfoControl.Dispose();
+            }
+            base.Dispose(disposing);
         }
     }
 }

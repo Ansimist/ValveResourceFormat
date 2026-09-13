@@ -5,6 +5,10 @@ namespace ValveResourceFormat.FlexSceneFile
 {
     partial class FlexSceneFile
     {
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Exports the flex scene to VFlex format used by Source Engine for facial animation data.
+        /// </remarks>
         public override string ToString()
         {
             var sb = new StringBuilder();
@@ -71,7 +75,7 @@ namespace ValveResourceFormat.FlexSceneFile
             sb.AppendLine();
         }
 
-        private static string PhonemeToDescription(int phoneme)
+        private static string? PhonemeToDescription(int phoneme)
         {
             return phoneme switch
             {
@@ -80,7 +84,7 @@ namespace ValveResourceFormat.FlexSceneFile
                 'p' => "Put; voiceless alveolar stop",
                 'w' => "With : voiced labial-velar approximant",
                 'f' => "Fork : voiceless labiodental fricative",
-                'v' => "Val : voiced labialdental fricative",
+                'v' => "Val : voiced labiodental fricative",
                 0x0279 => "Red : voiced alveolar approximant",
                 'r' => "Red : voiced alveolar trill",
                 0x027b => "Red : voiced retroflex approximant",
@@ -88,7 +92,7 @@ namespace ValveResourceFormat.FlexSceneFile
                 0x00f0 => "THen : voiced dental fricative",
                 0x03b8 => "THin : voiceless dental fricative",
                 0x0283 => "SHe : voiceless postalveolar fricative",
-                0x02a4 => "Joy : voiced postalveolar afficate",
+                0x02a4 => "Joy : voiced postalveolar affricate",
                 0x02a7 => "CHin : voiceless postalveolar affricate",
                 's' => "Sit : voiceless alveolar fricative",
                 'z' => "Zap : voiced alveolar fricative",

@@ -1,23 +1,26 @@
+using System.Diagnostics;
 using System.IO;
-using System.Windows.Forms;
-using GUI.Controls;
+using System.Threading.Tasks;
 using GUI.Utils;
 using ValveKeyValue;
 using ValveResourceFormat.ResourceTypes;
 
 namespace GUI.Types.Viewers
 {
-    class BinaryKeyValues1 : IViewer
+    class BinaryKeyValues1(VrfGuiContext vrfGuiContext) : IViewer, IDisposable
     {
+        private string? text;
+        private IReadOnlyList<KvSourceSpan>? sourceMap;
+
         public static bool IsAccepted(uint magic)
         {
             return magic == BinaryKV1.MAGIC;
         }
 
-        public TabPage Create(VrfGuiContext vrfGuiContext, Stream input)
+        public async Task LoadAsync(Stream? input)
         {
             Stream stream;
-            KVObject kv;
+            KVDocument kv;
 
             if (input != null)
             {
@@ -25,7 +28,7 @@ namespace GUI.Types.Viewers
             }
             else
             {
-                stream = File.OpenRead(vrfGuiContext.FileName);
+                stream = File.OpenRead(vrfGuiContext.FileName!);
             }
 
             try
@@ -37,20 +40,25 @@ namespace GUI.Types.Viewers
                 stream.Close();
             }
 
-            using var ms = new MemoryStream();
-            using var reader = new StreamReader(ms);
+            (text, sourceMap) = KVSerializer.Create(KVSerializationFormat.KeyValues1Text).SerializeWithSourceMap(kv);
+        }
 
-            KVSerializer.Create(KVSerializationFormat.KeyValues1Text).Serialize(ms, kv);
+        public ViewerContent GetContent()
+        {
+            Debug.Assert(text is not null);
+            Debug.Assert(sourceMap is not null);
 
-            ms.Seek(0, SeekOrigin.Begin);
+            var content = new ViewerContent.Text(text, SourceMap: sourceMap);
 
-            var text = reader.ReadToEnd();
+            text = null;
+            sourceMap = null;
 
-            var control = new CodeTextBox(text);
-            var tab = new TabPage();
-            tab.Controls.Add(control);
+            return content;
+        }
 
-            return tab;
+        public void Dispose()
+        {
+            //
         }
     }
 }

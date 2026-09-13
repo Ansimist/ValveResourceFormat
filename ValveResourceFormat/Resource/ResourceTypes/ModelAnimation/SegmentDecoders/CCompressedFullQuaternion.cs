@@ -2,8 +2,12 @@ using System.Runtime.InteropServices;
 
 namespace ValveResourceFormat.ResourceTypes.ModelAnimation.SegmentDecoders
 {
-    public class CCompressedFullQuaternion : AnimationSegmentDecoder
+    /// <summary>
+    /// Decodes full-precision quaternion animation data.
+    /// </summary>
+    internal class CCompressedFullQuaternion : AnimationSegmentDecoder
     {
+        /// <inheritdoc/>
         public override void Read(int frameIndex, Frame outFrame)
         {
             var offset = frameIndex * ElementCount;

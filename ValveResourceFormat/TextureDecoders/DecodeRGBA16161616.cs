@@ -4,7 +4,7 @@ using RGBA16161616 = (ushort R, ushort G, ushort B, ushort A);
 
 namespace ValveResourceFormat.TextureDecoders
 {
-    internal class DecodeRGBA16161616 : ITextureDecoder
+    internal readonly struct DecodeRGBA16161616 : ITextureDecoder
     {
         public void Decode(SKBitmap bitmap, Span<byte> input)
         {
@@ -12,7 +12,7 @@ namespace ValveResourceFormat.TextureDecoders
             var inputPixels = MemoryMarshal.Cast<byte, RGBA16161616>(input);
             var data = pixels.GetPixelSpan<SKColorF>();
 
-            if (bitmap.ColorType == SKColorType.RgbaF32)
+            if (bitmap.ColorType == ResourceTypes.Texture.HdrBitmapColorType)
             {
                 DecodeHdr(pixels, inputPixels);
                 return;
@@ -21,7 +21,7 @@ namespace ValveResourceFormat.TextureDecoders
             DecodeLdr(pixels, inputPixels);
         }
 
-        private static void DecodeHdr(SKPixmap pixels, Span<RGBA16161616> inputPixels)
+        private static void DecodeHdr(SKPixmap pixels, ReadOnlySpan<RGBA16161616> inputPixels)
         {
             var hdrColors = pixels.GetPixelSpan<SKColorF>();
             for (var i = 0; i < hdrColors.Length; i++)
@@ -35,7 +35,7 @@ namespace ValveResourceFormat.TextureDecoders
             }
         }
 
-        public static void DecodeLdr(SKPixmap pixels, Span<RGBA16161616> inputPixels)
+        public static void DecodeLdr(SKPixmap pixels, ReadOnlySpan<RGBA16161616> inputPixels)
         {
             var ldrColors = pixels.GetPixelSpan<SKColor>();
             var log = 0f;

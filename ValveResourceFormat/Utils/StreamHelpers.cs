@@ -2,21 +2,22 @@ using System.Buffers;
 using System.IO;
 using System.Text;
 
-namespace ValveResourceFormat
+namespace ValveResourceFormat.Utils
 {
     internal static class StreamHelpers
     {
         /// <summary>
         /// Reads a null terminated string.
         /// </summary>
-        /// <returns>String.</returns>
         /// <param name="stream">Stream.</param>
         /// <param name="encoding">Encoding.</param>
+        /// <param name="bufferLengthHint">Initial buffer length used when reading the string.</param>
+        /// <returns>String.</returns>
         public static string ReadNullTermString(this BinaryReader stream, Encoding encoding, int bufferLengthHint = 32)
         {
             if (encoding == Encoding.UTF8)
             {
-                return ReadNullTermUtf8String(stream);
+                return ReadNullTermUtf8String(stream, bufferLengthHint);
             }
 
             var characterSize = encoding.GetByteCount("e");
@@ -43,7 +44,7 @@ namespace ValveResourceFormat
         }
 
         /// <summary>
-        /// Reads a string at a given uint offset.
+        /// Reads a string located at a signed 32-bit relative offset read from the stream.
         /// </summary>
         /// <returns>String.</returns>
         /// <param name="stream">Stream.</param>
@@ -67,9 +68,9 @@ namespace ValveResourceFormat
             return str;
         }
 
-        private static string ReadNullTermUtf8String(BinaryReader stream)
+        private static string ReadNullTermUtf8String(BinaryReader stream, int bufferLengthHint)
         {
-            var buffer = ArrayPool<byte>.Shared.Rent(32);
+            var buffer = ArrayPool<byte>.Shared.Rent(bufferLengthHint);
 
             try
             {

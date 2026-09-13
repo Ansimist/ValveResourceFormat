@@ -1,136 +1,294 @@
-//#define CI_RELEASE_BUILD // for testing. For CI builds, it is set in Directory.Build.props
+//#define TEST_NON_LOCAL_BUILD // Pretend to have been built on a CI as a dev version
 
 using System.Globalization;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 namespace GUI.Utils;
 
 static partial class UpdateChecker
 {
-    public class GithubRelease
+    /// <summary>
+    /// A downloadable file for one runtime identifier.
+    /// </summary>
+    public class UpdateAsset
     {
-        public string tag_name { get; set; }
-        public string html_url { get; set; }
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("url")]
+        public string? Url { get; set; }
+
+        [JsonPropertyName("size")]
+        public long? Size { get; set; }
+
+        [JsonPropertyName("sha256")]
+        public string? Sha256 { get; set; }
     }
 
-    public class GithubActionRuns
+    /// <summary>
+    /// The latest tagged release.
+    /// </summary>
+    public class StableUpdate
     {
-        public class Run
-        {
-            public int run_number { get; set; }
-        }
+        [JsonPropertyName("version")]
+        public string? Version { get; set; }
 
-        public Run[] workflow_runs { get; set; }
+        [JsonPropertyName("releaseNotesUrl")]
+        public string? ReleaseNotesUrl { get; set; }
+
+        [JsonPropertyName("assets")]
+        public Dictionary<string, UpdateAsset>? Assets { get; set; }
+    }
+
+    /// <summary>
+    /// The latest automated build of the master branch.
+    /// </summary>
+    public class DevUpdate
+    {
+        [JsonPropertyName("buildNumber")]
+        public int BuildNumber { get; set; }
+
+        [JsonPropertyName("assets")]
+        public Dictionary<string, UpdateAsset>? Assets { get; set; }
+    }
+
+    /// <summary>
+    /// The update manifest describing every channel we can offer.
+    /// </summary>
+    public class UpdateManifest
+    {
+        [JsonPropertyName("stable")]
+        public StableUpdate? Stable { get; set; }
+
+        [JsonPropertyName("dev")]
+        public DevUpdate? Dev { get; set; }
     }
 
     [JsonSourceGenerationOptions(GenerationMode = JsonSourceGenerationMode.Metadata)]
-    [JsonSerializable(typeof(GithubActionRuns))]
-    [JsonSerializable(typeof(GithubRelease))]
+    [JsonSerializable(typeof(UpdateManifest))]
     partial class SourceGenerationContext : JsonSerializerContext
     {
     }
 
+    private const string ManifestUrl = "https://update.s2v.app/v1/latest.json";
+    private static readonly TimeSpan CheckInterval = TimeSpan.FromDays(1);
+    private static readonly TimeSpan FailedCheckRetryDelay = TimeSpan.FromMinutes(30);
 
-    private static bool Checked;
+    // The manifest describes both channels, so it is fetched once and re-evaluated when the channel changes
+    private static Task<UpdateManifest?>? ManifestTask;
+    private static readonly Lock CheckLock = new();
+    /// <summary>Whether the selected channel offers a build to install, either newer or a switch to that channel.</summary>
     public static bool IsNewVersionAvailable { get; private set; }
+    /// <summary>Whether the offered build is newer than the running one.</summary>
+    public static bool IsNewer { get; private set; }
     public static bool IsNewVersionStableBuild { get; private set; }
-    public static string NewVersion { get; private set; }
-    public static string ReleaseNotesUrl { get; private set; }
-    public static string ReleaseNotesVersion { get; private set; }
+    public static string? NewVersion { get; private set; }
+    /// <summary>The offered version as shown to the user, e.g. "20.0" or "dev build 7125".</summary>
+    public static string? NewVersionText { get; private set; }
+    public static string? ReleaseNotesUrl { get; private set; }
+    public static string? ReleaseNotesVersion { get; private set; }
+    public static string? DownloadUrl { get; private set; }
+    public static long? DownloadSize { get; private set; }
+    public static string? DownloadSha256 { get; private set; }
+
+    /// <summary>
+    /// The newest dev build known from this session's check, if it is newer than the running build, regardless of the selected channel.
+    /// Never performs a request, so it is safe to consult from error handlers.
+    /// </summary>
+    public static int? NewerDevBuild
+    {
+        get
+        {
+            Task<UpdateManifest?>? manifestTask;
+
+            using (CheckLock.EnterScope())
+            {
+                manifestTask = ManifestTask;
+            }
+
+            if (manifestTask is not { IsCompletedSuccessfully: true })
+            {
+                return null;
+            }
+
+            var currentVersion = GetCurrentVersion();
+
+            if (IsLocalBuild(currentVersion))
+            {
+                return null;
+            }
+
+            var dev = manifestTask.Result?.Dev;
+
+            return dev is { BuildNumber: > 0 } && dev.BuildNumber > currentVersion.Build ? dev.BuildNumber : null;
+        }
+    }
 
     public static async Task CheckForUpdates()
     {
-        if (Checked)
+        Task<UpdateManifest?> manifestTask;
+
+        using (CheckLock.EnterScope())
+        {
+            // Offloaded so that the request setup does not run on the ui thread
+            manifestTask = ManifestTask ??= Task.Run(GetManifestAsync);
+        }
+
+        UpdateManifest? manifest;
+
+        try
+        {
+            manifest = await manifestTask.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Let the next check retry instead of remembering the failure for the rest of the session
+            using (CheckLock.EnterScope())
+            {
+                if (ManifestTask == manifestTask)
+                {
+                    ManifestTask = null;
+                }
+            }
+
+            throw;
+        }
+
+        Evaluate(manifest, Settings.Config.Update.Channel);
+    }
+
+    /// <summary>
+    /// Performs the automatic update check if it is enabled and due. The outcome is persisted in the settings.
+    /// </summary>
+    public static async Task CheckForUpdatesIfNecessary()
+    {
+        if (!Settings.Config.Update.CheckAutomatically || Settings.Config.Update.UpdateAvailable)
         {
             return;
         }
 
-        Checked = true;
+        var now = DateTime.UtcNow;
+
+        if (DateTime.TryParseExact(Settings.Config.Update.NextCheck, "s", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var nextCheck) && now < nextCheck)
+        {
+            return;
+        }
 
         try
         {
-            var version = Application.ProductVersion;
-            var versionPlus = version.IndexOf('+', StringComparison.InvariantCulture); // Drop the git commit
-            var currentVersion = new Version(versionPlus > 0 ? version[..versionPlus] : version);
+            await CheckForUpdates().ConfigureAwait(false);
 
-            if (currentVersion.Build == 0)
-            {
-                return; // This was not built on the CI
-            }
-
-            using var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Add("User-Agent", "Source 2 Viewer Update Check (+https://github.com/ValveResourceFormat/ValveResourceFormat)");
-
-            var stableReleaseTask = GetLastStableRelease(httpClient);
-
-#if !CI_RELEASE_BUILD
-            // Fire the dev request away, before awaiting the first request for stable release
-            var lastDevBuild = GetLastDevBuild(httpClient);
-#endif
-
-            var stableReleaseData = await stableReleaseTask.ConfigureAwait(false);
-            var newVersion = stableReleaseData?.tag_name ?? "0.0";
-
-            if (newVersion.StartsWith('v')) // Just in case we tag a release with "v" prefix by mistake
-            {
-                newVersion = newVersion[1..];
-            }
-
-            var releaseVersion = new Version(newVersion);
-            IsNewVersionStableBuild = true;
-            IsNewVersionAvailable = releaseVersion.Major > currentVersion.Major || releaseVersion.Minor > currentVersion.Minor;
-            ReleaseNotesUrl = stableReleaseData?.html_url;
-            ReleaseNotesVersion = newVersion;
-            NewVersion = newVersion;
-
-#if !CI_RELEASE_BUILD
-            var devBuildData = await lastDevBuild.ConfigureAwait(false);
-
-            if (!IsNewVersionAvailable && devBuildData != null)
-            {
-                var newBuild = devBuildData?.workflow_runs[0]?.run_number ?? 0;
-                IsNewVersionStableBuild = false;
-                IsNewVersionAvailable = newBuild > currentVersion.Build;
-                NewVersion = newBuild.ToString(CultureInfo.InvariantCulture);
-            }
-#endif
-
-            if (Settings.Config.Update.CheckAutomatically)
-            {
-                Settings.Config.Update.UpdateAvailable = IsNewVersionAvailable;
-            }
+            Settings.Config.Update.NextCheck = (now + CheckInterval).ToString("s", CultureInfo.InvariantCulture);
         }
         catch (Exception e)
         {
+            // Being offline should not interrupt startup, a manual check from the About dialog reports its errors
             Log.Error(nameof(UpdateChecker), $"Failed to check for updates: {e.Message}");
-
-            MessageBox.Show($"Failed to check for updates: {e.Message}", "Update check failed");
+            Settings.Config.Update.NextCheck = (now + FailedCheckRetryDelay).ToString("s", CultureInfo.InvariantCulture);
         }
     }
 
-    private static async Task<GithubRelease> GetLastStableRelease(HttpClient httpClient)
+    private static Version GetCurrentVersion()
     {
-        var response = await httpClient.GetAsync(new Uri("https://api.github.com/repositories/42366054/releases/latest")).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
+        var version = Program.ProductVersion;
+        var versionPlus = version.IndexOf('+', StringComparison.InvariantCulture); // Drop the git commit
 
-        using var jsonStream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-
-        return await JsonSerializer.DeserializeAsync(jsonStream, SourceGenerationContext.Default.GithubRelease).ConfigureAwait(false);
+        return new Version(versionPlus > 0 ? version[..versionPlus] : version);
     }
 
-#if !CI_RELEASE_BUILD
-    private static async Task<GithubActionRuns> GetLastDevBuild(HttpClient httpClient)
+    private static bool IsLocalBuild(Version currentVersion)
     {
-        var response = await httpClient.GetAsync(new Uri("https://api.github.com/repositories/42366054/actions/runs?branch=master&status=success&per_page=1")).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-
-        using var jsonStream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-
-        return await JsonSerializer.DeserializeAsync(jsonStream, SourceGenerationContext.Default.GithubActionRuns).ConfigureAwait(false);
-    }
+#if TEST_NON_LOCAL_BUILD
+        return false;
+#else
+        return currentVersion.Build == 0;
 #endif
+    }
+
+    private static void Evaluate(UpdateManifest? manifest, Settings.UpdateChannel channel)
+    {
+        var currentVersion = GetCurrentVersion();
+
+        if (IsLocalBuild(currentVersion))
+        {
+            Settings.Config.Update.UpdateAvailable = false;
+            IsNewVersionAvailable = false;
+            IsNewVersionStableBuild = true;
+            NewVersion = ":)";
+            NewVersionText = NewVersion;
+            return; // This was not built on the CI
+        }
+
+        if (manifest == null)
+        {
+            return;
+        }
+
+        var stable = manifest.Stable;
+        var dev = manifest.Dev;
+
+        // Release notes are always for the stable release, no matter which channel is selected
+        ReleaseNotesUrl = stable?.ReleaseNotesUrl;
+        ReleaseNotesVersion = stable?.Version;
+
+        IsNewVersionStableBuild = channel == Settings.UpdateChannel.Stable;
+        IsNewer = false;
+        NewVersion = null;
+        Dictionary<string, UpdateAsset>? assets = null;
+
+        if (IsNewVersionStableBuild)
+        {
+            if (stable is { Version.Length: > 0 })
+            {
+                NewVersion = stable.Version;
+                var releaseVersion = Version.TryParse(NewVersion, out var parsed) ? parsed : new Version(0, 0);
+                IsNewer = releaseVersion > new Version(currentVersion.Major, currentVersion.Minor);
+                assets = stable.Assets;
+            }
+        }
+        else if (dev is { BuildNumber: > 0 })
+        {
+            NewVersion = dev.BuildNumber.ToString(CultureInfo.InvariantCulture);
+
+            // Tag and branch builds share one run number sequence, so this compares across channels too
+            IsNewer = dev.BuildNumber > currentVersion.Build;
+            assets = dev.Assets;
+        }
+
+        // An older or equal build on the other channel is offered from the About dialog, but never announced
+        IsNewVersionAvailable = IsNewer || (NewVersion != null && channel != Program.BuildChannel);
+        NewVersionText = NewVersion == null ? "Not available" : IsNewVersionStableBuild ? NewVersion : $"dev build {NewVersion}";
+
+        var asset = assets?.GetValueOrDefault(RuntimeInformation.RuntimeIdentifier);
+
+        // The file is verified after download, but the request itself should not go out in the clear either
+        DownloadUrl = asset?.Url?.StartsWith("https://", StringComparison.Ordinal) == true ? asset.Url : null;
+        DownloadSize = asset?.Size;
+        DownloadSha256 = asset?.Sha256;
+
+        Settings.Config.Update.UpdateAvailable = IsNewer;
+    }
+
+    private static async Task<UpdateManifest?> GetManifestAsync()
+    {
+        if (IsLocalBuild(GetCurrentVersion()))
+        {
+            return null; // Local builds have nothing to compare against
+        }
+
+        using var httpClient = new HttpClient();
+        httpClient.DefaultRequestHeaders.Add("User-Agent", $"Source2Viewer/{Program.ProductVersion} (+https://github.com/ValveResourceFormat/ValveResourceFormat)");
+
+        using var response = await httpClient.GetAsync(new Uri(ManifestUrl)).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+
+        using var jsonStream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+
+        return await JsonSerializer.DeserializeAsync(jsonStream, SourceGenerationContext.Default.UpdateManifest).ConfigureAwait(false);
+    }
 }

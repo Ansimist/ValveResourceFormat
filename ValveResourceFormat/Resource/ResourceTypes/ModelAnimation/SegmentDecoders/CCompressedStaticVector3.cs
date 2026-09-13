@@ -2,8 +2,15 @@ using System.Runtime.InteropServices;
 
 namespace ValveResourceFormat.ResourceTypes.ModelAnimation.SegmentDecoders
 {
-    public class CCompressedStaticVector3 : AnimationSegmentDecoder
+    /// <summary>
+    /// Decodes static Vector3 data using half-precision floats that don't change per frame.
+    /// </summary>
+    internal class CCompressedStaticVector3 : AnimationSegmentDecoder
     {
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Reads static half-precision Vector3 values that remain constant across all frames.
+        /// </remarks>
         public override void Read(int frameIndex, Frame outFrame)
         {
             var halfVectorData = MemoryMarshal.Cast<byte, Half3>(Data);

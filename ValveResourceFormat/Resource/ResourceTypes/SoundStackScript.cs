@@ -1,15 +1,23 @@
 using System.IO;
 using System.Text;
-using ValveResourceFormat.Blocks;
-using ValveResourceFormat.Utils;
 
 namespace ValveResourceFormat.ResourceTypes
 {
-    public class SoundStackScript : ResourceData
+    /// <summary>
+    /// Represents a sound stack script resource.
+    /// </summary>
+    public class SoundStackScript : Block
     {
-        public Dictionary<string, string> SoundStackScriptValue { get; private set; } // TODO: be Dictionary<string, SomeKVObject>
+        /// <inheritdoc/>
+        public override BlockType Type => BlockType.DATA;
 
-        public override void Read(BinaryReader reader, Resource resource)
+        /// <summary>
+        /// Gets the sound stack script values.
+        /// </summary>
+        public Dictionary<string, string> SoundStackScriptValue { get; private set; } = []; // TODO: be Dictionary<string, SomeKVObject>
+
+        /// <inheritdoc/>
+        public override void Read(BinaryReader reader)
         {
             reader.BaseStream.Position = Offset;
 
@@ -20,25 +28,12 @@ namespace ValveResourceFormat.ResourceTypes
                 throw new UnexpectedMagicException("Unknown version", version, nameof(version));
             }
 
-            SoundStackScriptValue = [];
-
             var count = reader.ReadInt32();
-            var offset = reader.BaseStream.Position;
 
             for (var i = 0; i < count; i++)
             {
-                var offsetToName = offset + reader.ReadInt32();
-                offset += 4;
-                var offsetToValue = offset + reader.ReadInt32();
-                offset += 4;
-
-                reader.BaseStream.Position = offsetToName;
-                var name = reader.ReadNullTermString(Encoding.UTF8);
-
-                reader.BaseStream.Position = offsetToValue;
-                var value = reader.ReadNullTermString(Encoding.UTF8);
-
-                reader.BaseStream.Position = offset;
+                var name = reader.ReadOffsetString(Encoding.UTF8);
+                var value = reader.ReadOffsetString(Encoding.UTF8);
 
                 // Valve have duplicates, assume last is correct?
                 SoundStackScriptValue.Remove(name);
@@ -47,17 +42,24 @@ namespace ValveResourceFormat.ResourceTypes
             }
         }
 
-        public override string ToString()
+        /// <inheritdoc/>
+        public override void Serialize(Stream stream)
         {
-            using var writer = new IndentedTextWriter();
+            throw new NotImplementedException("Serializing this block is not yet supported. If you need this, send us a pull request!");
+        }
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Writes each sound stack script entry with its name as a comment.
+        /// </remarks>
+        public override void WriteText(IndentedTextWriter writer)
+        {
             foreach (var entry in SoundStackScriptValue)
             {
                 writer.WriteLine($"// {entry.Key}");
                 writer.Write(entry.Value);
                 writer.WriteLine(string.Empty);
             }
-
-            return writer.ToString();
         }
     }
 }

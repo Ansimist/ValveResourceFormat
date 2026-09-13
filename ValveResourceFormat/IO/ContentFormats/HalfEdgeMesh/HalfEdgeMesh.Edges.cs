@@ -1,0 +1,941 @@
+
+using System.Diagnostics;
+using System.Linq;
+
+namespace ValveResourceFormat.IO.ContentFormats.HalfEdgeMesh;
+
+partial class HalfEdgeMesh
+{
+    /// <summary>
+    /// Returns the vertex the half edge points to.
+    /// </summary>
+    public static VertexHandle GetEndVertexConnectedToEdge(HalfEdgeHandle hHalfEdge)
+    {
+        if (!hHalfEdge.IsValid)
+        {
+            return VertexHandle.Invalid;
+        }
+
+        return hHalfEdge.Vertex;
+    }
+
+    /// <summary>
+    /// Returns the start and end vertices of a half edge.
+    /// </summary>
+    public static void GetVerticesConnectedToHalfEdge(HalfEdgeHandle hEdge, out VertexHandle hVertexA, out VertexHandle hVertexB)
+    {
+        if (!hEdge.IsValid)
+        {
+            hVertexA = VertexHandle.Invalid;
+            hVertexB = VertexHandle.Invalid;
+            return;
+        }
+
+        hVertexA = GetOppositeHalfEdge(hEdge).Vertex;
+        hVertexB = hEdge.Vertex;
+    }
+
+    /// <summary>
+    /// Returns both vertices of a full edge.
+    /// </summary>
+    public static void GetVerticesConnectedToFullEdge(HalfEdgeHandle hEdge, out VertexHandle hVertexA, out VertexHandle hVertexB)
+    {
+        GetVerticesConnectedToHalfEdge(hEdge, out hVertexA, out hVertexB);
+    }
+
+    /// <summary>
+    /// Returns the two half edges that make up a full edge.
+    /// </summary>
+    public static void GetHalfEdgesConnectedToFullEdge(HalfEdgeHandle hFullEdge, out HalfEdgeHandle hOutHalfEdgeA, out HalfEdgeHandle hOutHalfEdgeB)
+    {
+        if (hFullEdge.IsValid)
+        {
+            hOutHalfEdgeA = hFullEdge;
+            hOutHalfEdgeB = hFullEdge.OppositeEdge;
+        }
+        else
+        {
+            hOutHalfEdgeA = HalfEdgeHandle.Invalid;
+            hOutHalfEdgeB = HalfEdgeHandle.Invalid;
+        }
+    }
+
+    /// <summary>
+    /// Returns the half edge of a full edge that borders the given face.
+    /// </summary>
+    public static HalfEdgeHandle GetHalfEdgeForFaceEdge(FaceHandle hFace, HalfEdgeHandle hFullEdge)
+    {
+        if (!hFullEdge.IsValid)
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        if (hFullEdge.Face == hFace)
+        {
+            return hFullEdge;
+        }
+
+        if (hFullEdge.OppositeEdge.Face == hFace)
+        {
+            return hFullEdge.OppositeEdge;
+        }
+
+        return HalfEdgeHandle.Invalid;
+    }
+
+    /// <summary>
+    /// Returns the canonical half-edge representing the full edge that <paramref name="hEdge"/> belongs to.
+    /// </summary>
+    /// <param name="hEdge">The half-edge to find the full edge for.</param>
+    /// <returns>The half-edge of the opposite pair with the lower index, or <see cref="HalfEdgeHandle.Invalid"/> if <paramref name="hEdge"/> is invalid.</returns>
+    public HalfEdgeHandle GetFullEdgeForHalfEdge(HalfEdgeHandle hEdge)
+    {
+        if (!hEdge.IsValid)
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        if (hEdge.Index < this[hEdge].OppositeEdge)
+        {
+            return hEdge;
+        }
+        else
+        {
+            return GetOppositeHalfEdge(hEdge);
+        }
+    }
+
+    /// <summary>
+    /// Returns the half edge running the opposite direction.
+    /// </summary>
+    public static HalfEdgeHandle GetOppositeHalfEdge(HalfEdgeHandle hEdge)
+    {
+        if (!hEdge.IsValid)
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        return hEdge.OppositeEdge;
+    }
+
+    /// <summary>
+    /// Whether the full edge borders only one face.
+    /// </summary>
+    public static bool IsFullEdgeOpen(HalfEdgeHandle hFullEdge)
+    {
+        if (!hFullEdge.IsValid)
+        {
+            return false;
+        }
+
+        if (hFullEdge.Face == FaceHandle.Invalid)
+        {
+            return true;
+        }
+
+        if (hFullEdge.OppositeEdge.Face == FaceHandle.Invalid)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the faces on either side of a full edge.
+    /// </summary>
+    public static void GetFacesConnectedToFullEdge(HalfEdgeHandle hFullEdge, out FaceHandle hOutFaceA, out FaceHandle hOutFaceB)
+    {
+        hOutFaceA = FaceHandle.Invalid;
+        hOutFaceB = FaceHandle.Invalid;
+
+        if (!hFullEdge.IsValid)
+        {
+            return;
+        }
+
+        hOutFaceA = hFullEdge.Face;
+        hOutFaceB = hFullEdge.OppositeEdge.Face;
+    }
+
+    /// <summary>
+    /// Returns the face on the other side of a full edge from the given one.
+    /// </summary>
+    public static FaceHandle GetOppositeFaceConnectedToFullEdge(HalfEdgeHandle hFullEdge, FaceHandle hFace)
+    {
+        GetHalfEdgesConnectedToFullEdge(hFullEdge, out var hHalfEdgeA, out var hHalfEdgeB);
+
+        if (GetFaceConnectedToHalfEdge(hHalfEdgeA) == hFace)
+        {
+            return GetFaceConnectedToHalfEdge(hHalfEdgeB);
+        }
+        else if (GetFaceConnectedToHalfEdge(hHalfEdgeB) == hFace)
+        {
+            return GetFaceConnectedToHalfEdge(hHalfEdgeA);
+        }
+
+        return FaceHandle.Invalid;
+    }
+
+    /// <summary>
+    /// Returns the face the half edge borders.
+    /// </summary>
+    public static FaceHandle GetFaceConnectedToHalfEdge(HalfEdgeHandle hEdge)
+    {
+        if (!hEdge.IsValid)
+        {
+            return FaceHandle.Invalid;
+        }
+
+        return hEdge.Face;
+    }
+
+    /// <summary>
+    /// Returns the first face a full edge borders.
+    /// </summary>
+    public static FaceHandle GetFaceConnectedToFullEdge(HalfEdgeHandle hFullEdge)
+    {
+        if (!hFullEdge.IsValid)
+        {
+            return FaceHandle.Invalid;
+        }
+
+        if (hFullEdge.Face.IsValid)
+        {
+            return hFullEdge.Face;
+        }
+
+        return hFullEdge.OppositeEdge.Face;
+    }
+
+    /// <summary>
+    /// Returns the face both full edges border.
+    /// </summary>
+    public static FaceHandle FindFaceConnectingFullEdges(HalfEdgeHandle hEdgeA, HalfEdgeHandle hEdgeB)
+    {
+        GetFacesConnectedToFullEdge(hEdgeA, out var hFaceA1, out var hFaceA2);
+        GetFacesConnectedToFullEdge(hEdgeB, out var hFaceB1, out var hFaceB2);
+
+        if (hFaceA1.IsValid && ((hFaceA1 == hFaceB1) || (hFaceA1 == hFaceB2)))
+        {
+            return hFaceA1;
+        }
+
+        if (hFaceA2.IsValid && ((hFaceA2 == hFaceB1) || (hFaceA2 == hFaceB2)))
+        {
+            return hFaceA2;
+        }
+
+        return FaceHandle.Invalid;
+    }
+
+    /// <summary>
+    /// Returns the vertex both full edges meet at.
+    /// </summary>
+    public static VertexHandle FindVertexConnectingFullEdges(HalfEdgeHandle hEdgeA, HalfEdgeHandle hEdgeB)
+    {
+        GetVerticesConnectedToHalfEdge(hEdgeA, out var hVertexA1, out var hVertexA2);
+        GetVerticesConnectedToHalfEdge(hEdgeB, out var hVertexB1, out var hVertexB2);
+
+        if ((hVertexA1 == hVertexB1) || (hVertexA1 == hVertexB2))
+        {
+            return hVertexA1;
+        }
+
+        if ((hVertexA2 == hVertexB1) || (hVertexA2 == hVertexB2))
+        {
+            return hVertexA2;
+        }
+
+        return VertexHandle.Invalid;
+    }
+
+    /// <summary>
+    /// Collects every vertex touched by a set of full edges.
+    /// </summary>
+    public static void FindVerticesConnectedToFullEdges(IReadOnlyList<HalfEdgeHandle> edgeList, out VertexHandle[] outVertices)
+    {
+        var nNumEdges = edgeList.Count;
+        var uniqueVertices = new Dictionary<VertexHandle, int>();
+        var i = 0;
+
+        for (var iEdge = 0; iEdge < nNumEdges; ++iEdge)
+        {
+            GetVerticesConnectedToFullEdge(edgeList[iEdge], out var hVertexA, out var hVertexB);
+
+            if (!uniqueVertices.ContainsKey(hVertexA))
+            {
+                uniqueVertices.Add(hVertexA, i++);
+            }
+
+            if (!uniqueVertices.ContainsKey(hVertexB))
+            {
+                uniqueVertices.Add(hVertexB, i++);
+            }
+        }
+
+        outVertices = new VertexHandle[uniqueVertices.Count];
+        foreach (var hVertex in uniqueVertices)
+        {
+            outVertices[hVertex.Value] = hVertex.Key;
+        }
+    }
+
+    /// <summary>
+    /// Collects the faces bordered by a set of half edges, along with the edges that border no face.
+    /// </summary>
+    public static void FindFacesConnectedToHalfEdges(
+        IReadOnlyList<HalfEdgeHandle> pHalfEdgeList,
+        int nNumEdges,
+        out List<FaceHandle> pOutFaceList,
+        out List<HalfEdgeHandle> pOutEdgeForFaces)
+    {
+        pOutFaceList = new List<FaceHandle>(nNumEdges);
+        pOutEdgeForFaces = new List<HalfEdgeHandle>(nNumEdges);
+
+        var faceTable = new HashSet<FaceHandle>(nNumEdges);
+
+        for (var iEdge = 0; iEdge < nNumEdges; ++iEdge)
+        {
+            var hEdge = pHalfEdgeList[iEdge];
+            if (!hEdge.IsValid)
+            {
+                continue;
+            }
+
+            if (faceTable.Add(hEdge.Face))
+            {
+                pOutFaceList.Add(hEdge.Face);
+                pOutEdgeForFaces.Add(hEdge);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns the edge across the face from the given one.
+    /// </summary>
+    public static HalfEdgeHandle FindOppositeHalfEdgeInFace(HalfEdgeHandle hEdge, int nMaxFaceSides = -1)
+    {
+        if (!hEdge.IsValid)
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        if (hEdge.Face == FaceHandle.Invalid)
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        var nNumEdges = ComputeNumEdgesInFace(hEdge.Face);
+        if (((nNumEdges % 2) != 0) || (nNumEdges < 3))
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        if ((nMaxFaceSides > 0) && (nNumEdges > nMaxFaceSides))
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        var nStepCount = nNumEdges / 2;
+        var hCurrentEdge = hEdge;
+        for (var iStep = 0; iStep < nStepCount; ++iStep)
+        {
+            hCurrentEdge = hCurrentEdge.NextEdge;
+        }
+
+        return hCurrentEdge;
+    }
+
+    /// <summary>
+    /// Returns the next edge of an edge loop, carrying straight on through the vertex.
+    /// </summary>
+    public static HalfEdgeHandle FindNextHalfEdgeInLoop(HalfEdgeHandle hEdge, int nMaxVertexEdges)
+    {
+        var hVertex = GetEndVertexConnectedToEdge(hEdge);
+        var nNumEdges = ComputeNumEdgesConnectedToVertex(hVertex);
+
+        if (!IsHalfEdgeInMesh(hEdge))
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        if ((nNumEdges <= 1) || ((nNumEdges % 2) != 0) || ((nMaxVertexEdges > 0) && (nNumEdges > nMaxVertexEdges)))
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        var nOppositeEdge = nNumEdges / 2;
+        var hNextEdge = GetNextEdgeInFaceLoop(hEdge);
+        for (var i = 1; i < nOppositeEdge; ++i)
+        {
+            hNextEdge = GetNextEdgeInVertexLoop(hNextEdge);
+        }
+
+        if (!hNextEdge.IsValid)
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        if ((hNextEdge.Face == FaceHandle.Invalid) || (hNextEdge.OppositeEdge.Face == FaceHandle.Invalid))
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        Debug.Assert(hNextEdge != hEdge);
+        if (hNextEdge == hEdge)
+        {
+            return HalfEdgeHandle.Invalid;
+        }
+
+        return hNextEdge;
+    }
+
+    /// <summary>
+    /// Walks the edge loop that starts at the given edge.
+    /// </summary>
+    public static void FindEdgeLoopStartingAtEdge(HalfEdgeHandle hStartEdge, int nMaxVertexEdges, out HalfEdgeHandle[]? pOutEdgeList)
+    {
+        pOutEdgeList = null;
+
+        if (!IsHalfEdgeInMesh(hStartEdge))
+        {
+            return;
+        }
+
+        var nEdgeCount = 0;
+        var hCurrentEdge = hStartEdge;
+        do
+        {
+            hCurrentEdge = FindNextHalfEdgeInLoop(hCurrentEdge, nMaxVertexEdges);
+            ++nEdgeCount;
+        }
+        while ((hCurrentEdge != HalfEdgeHandle.Invalid) && (hCurrentEdge != hStartEdge));
+
+        pOutEdgeList = new HalfEdgeHandle[nEdgeCount];
+
+        nEdgeCount = 0;
+        hCurrentEdge = hStartEdge;
+        do
+        {
+            pOutEdgeList[nEdgeCount++] = hCurrentEdge;
+            hCurrentEdge = FindNextHalfEdgeInLoop(hCurrentEdge, nMaxVertexEdges);
+        }
+        while ((hCurrentEdge != HalfEdgeHandle.Invalid) && (hCurrentEdge != hStartEdge));
+    }
+
+    /// <summary>
+    /// Collects the edge loop the given edge belongs to.
+    /// </summary>
+    public void FindEdgeLoop(HalfEdgeHandle hEdge, int nMaxVertices, out List<HalfEdgeHandle>? pOutEdgeList)
+    {
+        GetHalfEdgesConnectedToFullEdge(hEdge, out var hHalfEdgeA, out var hHalfEdgeB);
+
+        FindEdgeLoopStartingAtEdge(hHalfEdgeA, nMaxVertices, out var edgeLoopA);
+
+        pOutEdgeList = null;
+
+        HalfEdgeHandle[]? edgeLoopB = null;
+
+        if ((edgeLoopA!.Length < 2) || (FindNextHalfEdgeInLoop(edgeLoopA.LastOrDefault(), nMaxVertices) != edgeLoopA.FirstOrDefault()))
+        {
+            FindEdgeLoopStartingAtEdge(hHalfEdgeB, nMaxVertices, out edgeLoopB);
+        }
+
+        var nNumEdgesA = edgeLoopA is null ? 0 : edgeLoopA.Length;
+        var nNumEdgesB = edgeLoopB is null ? 0 : edgeLoopB.Length;
+        pOutEdgeList = new List<HalfEdgeHandle>(nNumEdgesA + nNumEdgesB);
+
+        for (var iEdge = (nNumEdgesB - 1); iEdge > 0; --iEdge)
+        {
+            pOutEdgeList.Add(GetFullEdgeForHalfEdge(edgeLoopB![iEdge]));
+        }
+        for (var iEdge = 0; iEdge < nNumEdgesA; ++iEdge)
+        {
+            pOutEdgeList.Add(GetFullEdgeForHalfEdge(edgeLoopA![iEdge]));
+        }
+    }
+
+    /// <summary>
+    /// Collects the edge ring the given edge belongs to.
+    /// </summary>
+    public void FindEdgeRing(HalfEdgeHandle hEdge, out List<HalfEdgeHandle> outEdgeList)
+    {
+        GetHalfEdgesConnectedToFullEdge(hEdge, out var hStartHalfEdgeA, out var hStartHalfEdgeB);
+
+        var edgesA = new List<HalfEdgeHandle>();
+        var edgesB = new List<HalfEdgeHandle>();
+
+        for (var i = 0; i < 2; ++i)
+        {
+            var hCurrentEdge = hStartHalfEdgeA;
+            var nNumEdgesA = 0;
+            do
+            {
+                if (i == 1)
+                {
+                    edgesA.Add(hCurrentEdge);
+                }
+                ++nNumEdgesA;
+                var hFaceOppositeEdge = FindOppositeHalfEdgeInFace(hCurrentEdge);
+                if (!hFaceOppositeEdge.IsValid)
+                {
+                    break;
+                }
+
+                hCurrentEdge = hFaceOppositeEdge.OppositeEdge;
+            }
+            while (hCurrentEdge != hStartHalfEdgeA);
+            edgesA.EnsureCapacity(nNumEdgesA);
+
+            if ((hCurrentEdge != hStartHalfEdgeA) || (nNumEdgesA < 2))
+            {
+                var nNumEdgesB = 0;
+                var hLastEdge = hCurrentEdge;
+                hCurrentEdge = hStartHalfEdgeB;
+                do
+                {
+                    var hFaceOppositeEdge = FindOppositeHalfEdgeInFace(hCurrentEdge);
+                    if (!hFaceOppositeEdge.IsValid || (hFaceOppositeEdge == hLastEdge))
+                    {
+                        break;
+                    }
+
+                    hCurrentEdge = hFaceOppositeEdge.OppositeEdge;
+
+                    if (i == 1)
+                    {
+                        edgesB.Add(hCurrentEdge);
+                    }
+                    ++nNumEdgesB;
+                }
+                while (hCurrentEdge != hStartHalfEdgeB);
+
+                edgesB.EnsureCapacity(nNumEdgesB);
+            }
+        }
+
+        outEdgeList = new List<HalfEdgeHandle>(edgesA.Count + edgesB.Count);
+
+        for (var iEdge = edgesB.Count - 1; iEdge >= 0; --iEdge)
+        {
+            outEdgeList.Add(GetFullEdgeForHalfEdge(edgesB[iEdge]));
+        }
+
+        for (var iEdge = 0; iEdge < edgesA.Count; ++iEdge)
+        {
+            outEdgeList.Add(GetFullEdgeForHalfEdge(edgesA[iEdge]));
+        }
+    }
+
+    /// <summary>
+    /// Splits a set of edges into connected groups.
+    /// </summary>
+    public void FindEdgeIslands(IReadOnlyList<HalfEdgeHandle> pEdgeList, out List<List<HalfEdgeHandle>> pOutEdgeList)
+    {
+        pOutEdgeList = [];
+
+        var edgeSearchList = new List<HalfEdgeHandle>(pEdgeList);
+
+        while (edgeSearchList.Count > 0)
+        {
+            var hStartEdge = edgeSearchList[0];
+            edgeSearchList.RemoveAt(0);
+            if (!hStartEdge.IsValid)
+            {
+                continue;
+            }
+
+            var islandEdgeList = new List<HalfEdgeHandle>(32);
+            pOutEdgeList.Add(islandEdgeList);
+            islandEdgeList.Add(hStartEdge);
+
+            var nIslandEdgeIndex = 0;
+
+            while (nIslandEdgeIndex < islandEdgeList.Count)
+            {
+                var hCurrentEdge = islandEdgeList[nIslandEdgeIndex];
+
+                GetVerticesConnectedToFullEdge(hCurrentEdge, out var hVertexA, out var hVertexB);
+                GetFullEdgesConnectedToVertex(hVertexA, out var edgesConnectedToEdge, EdgeConnectivityType.Any);
+                GetFullEdgesConnectedToVertex(hVertexB, out var edgesConnectedToVertex, EdgeConnectivityType.Any);
+                edgesConnectedToEdge.AddRange(edgesConnectedToVertex);
+
+                var nNumConnectedEdges = edgesConnectedToEdge.Count;
+                for (var iEdge = 0; iEdge < nNumConnectedEdges; ++iEdge)
+                {
+                    var hConnectedEdge = edgesConnectedToEdge[iEdge];
+                    if (hConnectedEdge == hCurrentEdge)
+                    {
+                        continue;
+                    }
+
+                    var nIndexInSearchList = edgeSearchList.IndexOf(hConnectedEdge);
+                    if (nIndexInSearchList != -1)
+                    {
+                        islandEdgeList.Add(hConnectedEdge);
+                        edgeSearchList.RemoveAt(nIndexInSearchList);
+                    }
+                }
+
+                ++nIslandEdgeIndex;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Classifies how a set of edges is connected, and reports the edges forming the largest group.
+    /// </summary>
+    public static ComponentConnectivityType ClassifyEdgeListConnectivity(
+        IReadOnlyList<HalfEdgeHandle> pEdgeList,
+        int nNumEdges,
+        out List<HalfEdgeHandle> pOutSortedHalfEdgeList)
+    {
+        pOutSortedHalfEdgeList = [];
+
+        if ((pEdgeList is null) || (nNumEdges <= 0))
+        {
+            return ComponentConnectivityType.None;
+        }
+
+        var nNumHalfEdges = nNumEdges * 2;
+        var halfEdges = new HalfEdgeHandle[nNumHalfEdges];
+        for (var iEdge = 0; iEdge < nNumEdges; ++iEdge)
+        {
+            GetHalfEdgesConnectedToFullEdge(pEdgeList[iEdge], out halfEdges[iEdge * 2], out halfEdges[iEdge * 2 + 1]);
+        }
+
+        var connectivityType = ComponentConnectivityType.None;
+        var hFirstEdgeInList = HalfEdgeHandle.Invalid;
+
+        if (nNumEdges > 1)
+        {
+            for (var iEdge = 0; iEdge < nNumEdges; ++iEdge)
+            {
+                var hStartEdge = halfEdges[iEdge * 2];
+                var hStartEdgeOpposite = halfEdges[iEdge * 2 + 1];
+                var hCurrentEdge = hStartEdge;
+                var nNumConnectedHalfEdges = 0;
+                var bVisitedOpposite = false;
+                var bFoundSplit = false;
+
+                do
+                {
+                    ++nNumConnectedHalfEdges;
+                    if (hCurrentEdge == hStartEdgeOpposite)
+                    {
+                        bVisitedOpposite = true;
+                    }
+
+                    var hOppositeEdge = hCurrentEdge.OppositeEdge;
+                    var hNextEdgeInList = FindConnectedHalfEdgeInSet(hCurrentEdge, halfEdges, halfEdges.Length);
+
+                    if (hNextEdgeInList == hOppositeEdge)
+                    {
+                        if ((hFirstEdgeInList != halfEdges[0]) && (hFirstEdgeInList != halfEdges[1]))
+                        {
+                            hFirstEdgeInList = hNextEdgeInList;
+                        }
+                    }
+                    else
+                    {
+                        var hNextOpposite = hNextEdgeInList.OppositeEdge;
+                        if (FindConnectedHalfEdgeInSet(hNextOpposite, halfEdges, halfEdges.Length) != hOppositeEdge)
+                        {
+                            bFoundSplit = true;
+                        }
+                    }
+
+                    hCurrentEdge = hNextEdgeInList;
+                }
+                while (hCurrentEdge != hStartEdge);
+
+                if (nNumConnectedHalfEdges <= 2)
+                {
+                    continue;
+                }
+
+                if (iEdge == 0)
+                {
+                    if (!bVisitedOpposite && (nNumConnectedHalfEdges == nNumEdges))
+                    {
+                        connectivityType = ComponentConnectivityType.Loop;
+                        break;
+                    }
+
+                    if (nNumConnectedHalfEdges == nNumHalfEdges)
+                    {
+                        connectivityType = bFoundSplit ? ComponentConnectivityType.Tree : ComponentConnectivityType.List;
+                        break;
+                    }
+                }
+
+                connectivityType = ComponentConnectivityType.Mixed;
+                break;
+            }
+        }
+        else
+        {
+            connectivityType = ComponentConnectivityType.List;
+            hFirstEdgeInList = halfEdges[0];
+        }
+
+        {
+            var hStartEdge = HalfEdgeHandle.Invalid;
+
+            if (connectivityType == ComponentConnectivityType.Loop)
+            {
+                hStartEdge = halfEdges[0];
+                Debug.Assert(hFirstEdgeInList == HalfEdgeHandle.Invalid);
+            }
+            else if (connectivityType == ComponentConnectivityType.List)
+            {
+                hStartEdge = hFirstEdgeInList;
+                Debug.Assert(hFirstEdgeInList != HalfEdgeHandle.Invalid);
+            }
+
+            if (hStartEdge != HalfEdgeHandle.Invalid)
+            {
+                pOutSortedHalfEdgeList.EnsureCapacity(nNumEdges);
+
+                var hCurrentEdge = hStartEdge;
+                do
+                {
+                    pOutSortedHalfEdgeList.Add(hCurrentEdge);
+                    var hNextEdge = FindConnectedHalfEdgeInSet(hCurrentEdge, halfEdges, halfEdges.Length);
+
+                    if (hNextEdge == hCurrentEdge.OppositeEdge)
+                    {
+                        break;
+                    }
+
+                    hCurrentEdge = hNextEdge;
+                }
+                while (hCurrentEdge != hStartEdge);
+            }
+
+            if (connectivityType == ComponentConnectivityType.Loop)
+            {
+                var nNumSortedEdges = pOutSortedHalfEdgeList.Count;
+                var sortedListOpposite = new HalfEdgeHandle[nNumSortedEdges];
+
+                var facesA = new HashSet<FaceHandle>(nNumSortedEdges);
+                var facesB = new HashSet<FaceHandle>(nNumSortedEdges);
+
+                for (var iEdge = 0; iEdge < nNumSortedEdges; ++iEdge)
+                {
+                    var hHalfEdgeA = pOutSortedHalfEdgeList[iEdge];
+                    var hHalfEdgeB = GetOppositeHalfEdge(hHalfEdgeA);
+                    var hFaceA = GetFaceConnectedToHalfEdge(hHalfEdgeA);
+                    var hFaceB = GetFaceConnectedToHalfEdge(hHalfEdgeB);
+                    facesA.Add(hFaceA);
+                    facesB.Add(hFaceB);
+
+                    sortedListOpposite[nNumSortedEdges - iEdge - 1] = hHalfEdgeB;
+                }
+
+                if (facesB.Count < facesA.Count)
+                {
+                    pOutSortedHalfEdgeList = sortedListOpposite.ToList();
+                }
+            }
+        }
+
+        return connectivityType;
+    }
+
+    /// <summary>
+    /// Splits a set of edges into ribs and rails, and reports the edges that belong to neither.
+    /// </summary>
+    public static int FindEdgeRibs(IReadOnlyList<HalfEdgeHandle> edges, int numEdges,
+        out List<List<HalfEdgeHandle>> leftRibs, out List<List<HalfEdgeHandle>> rightRibs,
+        out List<HalfEdgeHandle> spineEdges)
+    {
+        const int maxFaceEdges = 4;
+
+        leftRibs = [];
+        rightRibs = [];
+
+        var connectivityType = ClassifyEdgeListConnectivity(edges, numEdges, out spineEdges);
+        if ((connectivityType != ComponentConnectivityType.Loop) && (connectivityType != ComponentConnectivityType.List))
+        {
+            return 0;
+        }
+
+        var numSpineEdges = spineEdges.Count;
+        var numRibs = numSpineEdges * 2;
+        var ribCount = 0;
+
+        for (var i = 0; i < numRibs; i++)
+        {
+            leftRibs.Add([]);
+            rightRibs.Add([]);
+        }
+
+        for (var i = 0; i < numSpineEdges; ++i)
+        {
+            var leftRibEdgesTop = leftRibs[ribCount + 0];
+            var leftRibEdgesBottom = leftRibs[ribCount + 1];
+            var rightRibEdgesTop = rightRibs[ribCount + 0];
+            var rightRibEdgesBottom = rightRibs[ribCount + 1];
+            ribCount += 2;
+
+            var hStartEdge = spineEdges[i];
+            var hCurrentEdge = hStartEdge;
+            do
+            {
+                var hFaceOppositeEdge = FindOppositeHalfEdgeInFace(hCurrentEdge, maxFaceEdges);
+                if (!hFaceOppositeEdge.IsValid)
+                {
+                    break;
+                }
+
+                leftRibEdgesTop.Add(FindPreviousEdgeInFaceLoop(hCurrentEdge));
+                leftRibEdgesBottom.Add(GetNextEdgeInFaceLoop(hCurrentEdge));
+                hCurrentEdge = hFaceOppositeEdge.OppositeEdge;
+            }
+            while (hCurrentEdge != hStartEdge);
+
+            hStartEdge = spineEdges[i].OppositeEdge;
+            hCurrentEdge = hStartEdge;
+            do
+            {
+                var hFaceOppositeEdge = FindOppositeHalfEdgeInFace(hCurrentEdge, maxFaceEdges);
+                if (!hFaceOppositeEdge.IsValid)
+                {
+                    break;
+                }
+
+                rightRibEdgesTop.Add(GetNextEdgeInFaceLoop(hCurrentEdge));
+                rightRibEdgesBottom.Add(FindPreviousEdgeInFaceLoop(hCurrentEdge));
+                hCurrentEdge = hFaceOppositeEdge.OppositeEdge;
+            }
+            while (hCurrentEdge != hStartEdge);
+        }
+
+        Debug.Assert(ribCount == numRibs);
+
+        return numRibs;
+    }
+
+    /// <summary>
+    /// Collects the faces bordered by a set of full edges, along with how many of those edges each face borders.
+    /// </summary>
+    public static void FindFacesConnectedToFullEdges(IReadOnlyList<HalfEdgeHandle> edgeList, List<FaceHandle> outFaces, List<int> outFaceEdgeCounts)
+    {
+        outFaces.Clear();
+        outFaceEdgeCounts?.Clear();
+
+        var uniqueFaces = new Dictionary<FaceHandle, int>();
+
+        for (var i = 0; i < edgeList.Count; i++)
+        {
+            GetFacesConnectedToFullEdge(edgeList[i], out var faceA, out var faceB);
+
+            if (faceA.IsValid && !uniqueFaces.ContainsKey(faceA))
+            {
+                uniqueFaces.Add(faceA, uniqueFaces.Count);
+            }
+
+            if (faceB.IsValid && !uniqueFaces.ContainsKey(faceB))
+            {
+                uniqueFaces.Add(faceB, uniqueFaces.Count);
+            }
+        }
+
+        foreach (var kv in uniqueFaces)
+        {
+            outFaces.Add(kv.Key);
+        }
+
+        if (outFaceEdgeCounts != null)
+        {
+            outFaceEdgeCounts.AddRange(new int[outFaces.Count]);
+
+            for (var i = 0; i < edgeList.Count; i++)
+            {
+                GetFacesConnectedToFullEdge(edgeList[i], out var faceA, out var faceB);
+
+                if (faceA.IsValid && uniqueFaces.TryGetValue(faceA, out var indexA))
+                {
+                    outFaceEdgeCounts[indexA]++;
+                }
+
+                if (faceB.IsValid && uniqueFaces.TryGetValue(faceB, out var indexB))
+                {
+                    outFaceEdgeCounts[indexB]++;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Splits the open edges of a set into connected groups, both as half edges and as full edges.
+    /// </summary>
+    public void FindOpenEdgeIslands(IReadOnlyList<HalfEdgeHandle> edges, out List<List<HalfEdgeHandle>> outHalfEdgeIslandList, out List<List<HalfEdgeHandle>> outFullEdgeIslandList)
+    {
+        outHalfEdgeIslandList = [];
+        outFullEdgeIslandList = [];
+
+        var edgeSearchList = new List<HalfEdgeHandle>(edges.Count);
+
+        for (var iEdge = 0; iEdge < edges.Count; ++iEdge)
+        {
+            GetHalfEdgesConnectedToFullEdge(edges[iEdge], out var hHalfEdgeA, out var hHalfEdgeB);
+
+            var hFaceA = GetFaceConnectedToHalfEdge(hHalfEdgeA);
+            var hFaceB = GetFaceConnectedToHalfEdge(hHalfEdgeB);
+
+            if (hFaceA == FaceHandle.Invalid && hFaceB != FaceHandle.Invalid)
+            {
+                edgeSearchList.Add(hHalfEdgeA);
+            }
+            else if (hFaceB == FaceHandle.Invalid && hFaceA != FaceHandle.Invalid)
+            {
+                edgeSearchList.Add(hHalfEdgeB);
+            }
+        }
+
+        while (edgeSearchList.Count > 0)
+        {
+            var hLoopStartEdge = edgeSearchList[0];
+            var hCurrentEdge = hLoopStartEdge;
+            var nCurrentEdgeIndex = 0;
+
+            do
+            {
+                var nPrevEdgeIndex = nCurrentEdgeIndex;
+                hCurrentEdge = hCurrentEdge.NextEdge;
+                nCurrentEdgeIndex = edgeSearchList.IndexOf(hCurrentEdge);
+
+                if (nPrevEdgeIndex == -1 && nCurrentEdgeIndex != -1)
+                {
+                    break;
+                }
+            }
+            while (hCurrentEdge != hLoopStartEdge);
+
+            Debug.Assert(nCurrentEdgeIndex != -1);
+            if (nCurrentEdgeIndex == -1)
+            {
+                break;
+            }
+
+            var islandHalfEdgeList = new List<HalfEdgeHandle>();
+            var islandFullEdgeList = new List<HalfEdgeHandle>();
+
+            outHalfEdgeIslandList.Add(islandHalfEdgeList);
+            outFullEdgeIslandList.Add(islandFullEdgeList);
+
+            while (nCurrentEdgeIndex != -1)
+            {
+                islandHalfEdgeList.Add(hCurrentEdge);
+                islandFullEdgeList.Add(GetFullEdgeForHalfEdge(hCurrentEdge));
+                edgeSearchList.RemoveAt(nCurrentEdgeIndex);
+
+                hCurrentEdge = hCurrentEdge.NextEdge;
+                nCurrentEdgeIndex = edgeSearchList.IndexOf(hCurrentEdge);
+            }
+        }
+    }
+}
